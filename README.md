@@ -6,7 +6,7 @@ The application is Docker-ized and Deployed on to an AWS ECS.
 
 --------------------------------------
 
-The Tech Stack is as follows per layer:
+The Planned Tech Stack is as follows per layer:
 
 Backend API -> Java + spring Boot
 Asynchronous Queue -> AWS SQS
@@ -17,28 +17,3 @@ Deployment -> AWS ECS (API + Worker)
 CI/CD -> Github Actions -> ECR -> ECS
 Monitoring/Logging -> Cloudwatch
 
---------------------------------------
-
-┌─────────────┐
-│   Client    │
-│  (HTTP)    │
-└─────┬──────┘
-      │ POST /jobs
-      ▼
-┌─────────────┐       ┌─────────────┐
-│  API Server │──────>│    SQS      │
-│  (Spring)  │       │   Queue     │
-└─────┬──────┘       └─────┬───────┘
-      │                     │
-      ▼                     ▼
-┌─────────────┐       ┌─────────────┐
-│ Worker      │       │ CloudWatch  │
-│ (Spring)    │       │ Logs        │
-│ Processes  │        _______________
-│ Jobs       │
-└─────┬──────┘
-      ▼
-┌─────────────┐
-│ S3 / Dynamo │
-│ Storage     │
-└─────────────┘
