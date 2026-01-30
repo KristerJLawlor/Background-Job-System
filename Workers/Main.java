@@ -3,125 +3,176 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
+import java.util.concurrent.*;
 
 public class Main {
 
+    private static final int THREAD_COUNT = 4;  //Number of parallel threads we will use
+    
     public static void main(String[] args) {
+
         //Attempt to get image URL from user and process it
         Scanner scanner = new Scanner(System.in);
+        
+        // Output folder
+        File outputFolder = new File("avatars");
+        if (!outputFolder.exists()) {
+            outputFolder.mkdir();
+        }
+
+        
+        // Ask user which mode
+        System.out.println("Select mode:");
+        System.out.println("1 - Manual input");
+        System.out.println("2 - Batch from text file");
+        System.out.print("Enter 1 or 2: ");
+        String choice = scanner.nextLine().trim();
+
+        //Create a List to hold instances of Runnable tasks for threading
+        List<ImageJob> jobsList = new ArrayList<>();
+
 
         try {
-            // Ask user which mode
-            System.out.println("Select mode:");
-            System.out.println("1 - Manual input");
-            System.out.println("2 - Batch from text file");
-            System.out.print("Enter 1 or 2: ");
-            String choice = scanner.nextLine().trim();
-
-            // Output folder
-            File outputFolder = new File("avatars");
-            if (!outputFolder.exists()) {
-                outputFolder.mkdir();
+            //Decide how to collect jobs based on user choice
+            switch (choice) {
+                case "1" -> collectManualJobs(scanner, jobsList);
+                case "2" -> collectBatchJobs(scanner, jobsList);
+                default -> {
+                    System.out.println("Invalid option. Exiting");
+                    return;
+                }
             }
-
-            if (choice.equals("1")) {
-                runManualMode(scanner, outputFolder);
-            } else if (choice.equals("2")) {
-                runBatchMode(scanner, outputFolder);
-            } else {
-                System.out.println("Invalid choice. Exiting.");
-            }
+            //Run the collected jobs in parallel
+            runParallelProcessing(jobsList, outputFolder);
 
         } finally {
             scanner.close();
         }
-
     }   
 
-    private static void runManualMode(Scanner scanner, File outputFolder) {
-            //Ask the user how many images they want to process
-            System.out.print("How many images do you want to process? ");
-            int count = Integer.parseInt(scanner.nextLine());
+    //Collect jobs for manual mode
+    private static void collectManualJobs(Scanner scanner, List<ImageJob> jobsList) {
+        //Get number of images to process
+        System.out.print("How many images? ");
+        int count = Integer.parseInt(scanner.nextLine());
 
+        for (int i = 1; i <= count; i++) {
+            System.out.println("\nImage " + i);
 
-            if (!outputFolder.exists()) {
-                outputFolder.mkdir();
-            }
+            System.out.print("Image URL: ");
+            String url = scanner.nextLine().trim();
 
-            for (int i = 1; i <= count; i++) 
-            {
-                System.out.println("\nProcessing image " + i + " of " + count);
+            System.out.print("Output name (without extension): ");
+            String name = scanner.nextLine().trim();
 
-                //Get image URL from user
-                System.out.print("Enter image URL: ");
-                String imageUrl = scanner.nextLine().trim();
-
-                //Get desired name for output image
-                System.out.print("Name output image (without extension): ");
-                String imageName = scanner.nextLine().trim();
-                //Generate unique file name to avoid overwriting and append with png extension
-                File outputFile = getUniqueFile(outputFolder, imageName, "png");
-
-                processImage(imageUrl, outputFile);
-            }
+            //Add job to the job list
+            jobsList.add(new ImageJob(url, name));
+        }
     }
 
-    private static void runBatchMode(Scanner scanner, File outputFolder) {
 
-        //Get path to text file with URLs
-        System.out.print("Enter path to text file with URLs: ");
-        String path = scanner.nextLine().trim();
-        File urlFile = new File(path);
+    //Collect jobs for batch mode
+    private static void collectBatchJobs(Scanner scanner, List<ImageJob> jobs) {
+        //Get path to text file with urls in it
+        System.out.print("Path to URL file: ");
+        File file = new File(scanner.nextLine().trim());    //Read URLs from file
 
-        //return if file doesnt exist
-        if (!urlFile.exists()) {
-            System.err.println("File not found: " + path);
-            return;
+        if (!file.exists()) {
+            throw new RuntimeException("File not found.");
         }
 
-        //Read each line from the file and process as image URL
-        try (BufferedReader reader = new BufferedReader(new FileReader(urlFile))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
-            int count = 1;
-            //Process each URL in the file until EOF
+            int counter = 1;
+
+            //Read url on each line until EOF
             while ((line = reader.readLine()) != null) {
-                String imageUrl = line.trim();
-                if (imageUrl.isEmpty()) continue;    //Skip empty lines
-
-                String imageName = "avatar_" + count;
-                File outputFile = getUniqueFile(outputFolder, imageName, "png");
-
-                System.out.println("\nProcessing URL: " + imageUrl);
-                processImage(imageUrl, outputFile);
-                count++;
+                line = line.trim();
+                if (!line.isEmpty()) {
+                    //Add job with a default name based on counter to the job list
+                    jobs.add(new ImageJob(line, "avatar_" + counter));
+                    counter++;
+                }
             }
-
-            System.out.println("\nBatch processing completed!");
-
         } catch (IOException e) {
-            System.err.println("Error reading file: " + e.getMessage());
+            throw new RuntimeException("Failed to read file: " + e.getMessage());
         }
     }
 
-    private static void processImage(String imageUrl, File outputFile) {
-        try {
-                //Begin benchmarking time
-                long startTime = System.nanoTime();
-                //Download and resize the image using our DiscordImageResizer class
-                BufferedImage imageResult = DiscordImageResizer.downloadAndResize(imageUrl);
-                //End benchmarking time
-                long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-                
-                //Save the processed image to disk
-                DiscordImageResizer.saveImage(imageResult, outputFile);
-                System.out.println("Image saved successfully to: " + outputFile.getAbsolutePath());
+    //Multi-threaded processing of image jobs
+    private static void runParallelProcessing(List<ImageJob> jobs, File outputFolder) {
+        //Create a fixed thread pool of 4 threads that persist for the duration of processing
+        ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
 
-                System.out.println("Resize + download took: " + durationMs + " ms");
-        } catch (IOException e) {
-            System.err.println("Failed to process URL: " + imageUrl + " -> " + e.getMessage());
+        //Future objects to track task completion. Futures can be used to check if a task is done or to get its result
+        //The ? wildcard means void, since we dont expect any return value from the tasks. We only care about completion or failure
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (ImageJob job : jobs) {
+            //Submit each job to the executor for parallel processing
+            //This wraps the processJob method in a lambda to match the Callable/Runnable signature
+            //Then places it in the executor's task queue
+
+            //Every worker thread will pick up jobs as they become available 
+            //and work on their own url, create their own image, and save it independently
+            Future<?> future = executor.submit(() -> processJob(job, outputFolder));   
+            //We will use the future list to monitor task completion
+            futures.add(future);
         }
 
+        //Wait for all submitted tasks to complete before proceeding
+        for (Future<?> future : futures) {
+            try {
+                //future.get() will block the main thread from continuing until the worker thread's tasks are flagged complete
+                future.get();
+            } catch (ExecutionException e) {
+                System.err.println("A job failed:");
+                e.getCause().printStackTrace();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                System.err.println("Main thread interrupted while waiting for jobs.");
+            }
+        }
+
+        //Stop accepting new tasks and shutdown the executor
+        executor.shutdown();
+
+        //While we wait for existing tasks to finish, we can set a timeout to avoid waiting indefinitely as a safeguard
+        try {
+            if (!executor.awaitTermination(1, TimeUnit.MINUTES)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        System.out.println("\nAll jobs completed.");
+    }
+
+    //Process a single image job
+    private static void processJob(ImageJob job, File outputFolder) {
+        try {
+            File outputFile = getUniqueFile(outputFolder, job.imageName, "png");
+
+            //Begin timing the operation
+            long start = System.nanoTime();
+            BufferedImage avatar = DiscordImageResizer.downloadAndResize(job.url);
+            long durationMs = (System.nanoTime() - start) / 1_000_000;  //Record time elapsed in milliseconds
+
+            DiscordImageResizer.saveImage(avatar, outputFile);
+
+            System.out.println(
+                "Saved: " + outputFile.getName() +
+                " in (" + durationMs + " ms)"
+            );
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed processing: " + job.url, e); //Allow future.get() to catch and report
+        }
     }
 
 
@@ -134,6 +185,16 @@ public class Main {
             counter++;
         }
         return file;
+    }
+
+    private static class ImageJob {
+        String url;
+        String imageName;
+
+        ImageJob(String url, String name) {
+            this.url = url;
+            this.imageName = name;
+        }
     }
 
 }
