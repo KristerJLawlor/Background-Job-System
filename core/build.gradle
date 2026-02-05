@@ -1,0 +1,13 @@
+plugins {
+    id 'java-library'
+}
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_14    //requires Java 14 or above for case switch expressions
+    targetCompatibility = JavaVersion.VERSION_14
+}
+
+repositories {
+    mavenCentral()
+}

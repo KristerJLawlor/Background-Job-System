@@ -1,0 +1,10 @@
+allprojects {
+    apply plugin: 'java'
+
+    group = 'com.krister.avatar'
+    version = '1.0.0'
+
+    repositories {
+        mavenCentral()
+    }
+}

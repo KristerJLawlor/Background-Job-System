@@ -1,0 +1,26 @@
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation project(':core')
+}
+
+application {
+    mainClass = 'com.krister.avatar.cli.Main'
+
+    //Forward console input to the program
+    tasks.named('run') {
+        standardInput = System.in
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_14
+    targetCompatibility = JavaVersion.VERSION_14
+}
+
+repositories {
+    mavenCentral()
+}
+

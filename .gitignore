@@ -1,1 +1,46 @@
+# === Root ===
 **/avatars/
+/Workers/
+urlFile.txt
+
+# === Gradle ===             
+build/                      
+*/build/                    
+.gradle/                    
+
+# Gradle distributions
+*/build/distributions/
+
+# Keep Gradle wrapper in Git
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# === IDEs ===
+.vscode/
+.idea/
+*.iml
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+
+# === Java / Compilation artifacts ===
+*.class
+*.jar
+*.war
+*.ear
+
+# === Temporary / logs ===
+*.log
+out/
+tmp/
+
+# === Database / runtime files (for future Spring Boot API) ===
+*.h2.db
+*.db
+*.pid
+
+# Temporary / compiled binaries
+*.bin
