@@ -5,6 +5,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -27,13 +29,16 @@ public class Main {
         //Attempt to get image URL from user and process it
         Scanner scanner = new Scanner(System.in);
         
-        // Output folder
-        File outputFolder = new File("avatars");
-        if (!outputFolder.exists()) {
-            outputFolder.mkdir();
-        }
+        //Set the project root to the parent of current directory, so we can save the avatars
+        //In the project root instead of the cli folder (current directory)
+        Path projectRoot = Paths.get(System.getProperty("user.dir")).getParent();
+        Path avatarsDir = projectRoot.resolve("avatars");
 
-        
+        File outputFolder = avatarsDir.toFile();
+        if (!outputFolder.exists()) {
+            outputFolder.mkdirs();
+        }
+            
         // Ask user which mode
         System.out.println("Select mode:");
         System.out.println("1 - Manual input");
