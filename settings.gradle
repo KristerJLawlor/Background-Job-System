@@ -1,3 +1,5 @@
 rootProject.name = 'Background-Job-System'
 
-include 'core', 'cli'
+include 'core'
+include 'cli'
+include 'api'
