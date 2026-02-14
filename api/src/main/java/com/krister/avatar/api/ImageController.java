@@ -15,11 +15,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.krister.avatar.core.DiscordImageResizer; //Import the core module to use the image resizing functionality
 
-@RestController
-@RequestMapping("/api")
+@RestController //Marks this class as a REST controller to handle HTTP requests
+@RequestMapping("/api") //Base path for all endpoints in this controller
 public class ImageController {
 
-    @PostMapping("/resize")
+    @PostMapping("/resize") //Defines a POST endpoint at /api/resize to handle image resizing requests
     public ResponseEntity<byte[]> resizeImage(@RequestParam String url) {
         try {
             //Callback to the core module to download and resize the image

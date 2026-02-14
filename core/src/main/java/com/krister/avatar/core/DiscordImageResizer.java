@@ -5,7 +5,10 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 
 import javax.imageio.ImageIO;
 
@@ -18,22 +21,43 @@ public class DiscordImageResizer {
     //Target width and height for Discord avatars are 128x128 pixels
     private static final int DISCORD_IMAGE_DIMENSION = 128;
 
-    public static BufferedImage downloadAndResize(String imageUrl) throws IOException {
+    public static BufferedImage downloadAndResize(String imageUrl) throws IOException, URISyntaxException {
         //Call downloadImage and resizeImage methods to get the final processed image
         BufferedImage originalImage = downloadImage(imageUrl);
         return resizeImage(originalImage, DISCORD_IMAGE_DIMENSION, DISCORD_IMAGE_DIMENSION);
     }
 
     public static BufferedImage downloadImage(String imageUrl) throws IOException {
-        //Download the image from given URL without resizing
-        //We use bufferedimage so we can manipulate the image before returning it
-        BufferedImage image = ImageIO.read(URI.create(imageUrl).toURL());
 
-        //Check if image was successfully downloaded, else throw an exception
-        if (image == null) {
-            throw new IOException("Failed to download image from URL: " + imageUrl);
+        try {
+            URI uri = new URI(imageUrl.trim()); //Trim whitespace from URL
+            URL url = uri.toURL();  //Convert URI to URL
+
+            //Open a connection to the URL
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();    //Make configurable HTTP connection object
+            connection.setRequestMethod("GET"); 
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+
+            int responseCode = connection.getResponseCode();    //send the request and get response code
+            if (responseCode != 200) {
+                throw new IOException("HTTP error code: " + responseCode);
+            }
+
+            //Download the image from given URL without resizing
+            //We use bufferedimage so we can manipulate the image before returning it
+            BufferedImage image = ImageIO.read(connection.getInputStream());
+
+            if (image == null) {
+                throw new IllegalArgumentException("URL did not return an image");
+            }
+
+            return image;
+
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid image URL: " + imageUrl, e);
         }
-        return image;
     }
 
 

@@ -37,7 +37,7 @@ public class ImageJobService {
             jobStatuses.put(jobId, JobStatus.COMPLETED);
 
         } catch (Exception e) {
-            e.printStackTrace();  // ADD THIS
+            e.printStackTrace();  
             jobStatuses.put(jobId, JobStatus.FAILED);
         }
     }
