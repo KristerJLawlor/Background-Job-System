@@ -1,14 +1,14 @@
-# Use lightweight Java runtime
+# Use a JDK image
 FROM eclipse-temurin:21-jdk-jammy
 
 # Set working directory
 WORKDIR /app
 
-# Copy built jar
-COPY api/build/libs/api-*.jar app.jar
+# Copy only the built boot JAR
+COPY api/build/libs/*.jar app.jar
 
-# Expose API port
+# Expose the port
 EXPOSE 8080
 
-# Run the Spring Boot app
+# Run the JAR
 ENTRYPOINT ["java", "-jar", "app.jar"]
