@@ -21,7 +21,7 @@ public class DiscordImageResizer {
     //Target width and height for Discord avatars are 128x128 pixels
     private static final int DISCORD_IMAGE_DIMENSION = 128;
 
-    public static BufferedImage downloadAndResize(String imageUrl) throws IOException, URISyntaxException {
+    public static BufferedImage downloadAndResize(String imageUrl) throws IOException{
         //Call downloadImage and resizeImage methods to get the final processed image
         BufferedImage originalImage = downloadImage(imageUrl);
         return resizeImage(originalImage, DISCORD_IMAGE_DIMENSION, DISCORD_IMAGE_DIMENSION);
@@ -50,14 +50,14 @@ public class DiscordImageResizer {
             BufferedImage image = ImageIO.read(connection.getInputStream());
 
             if (image == null) {
-                throw new IllegalArgumentException("URL did not return an image");
+                throw new IOException("URL did not return an image");
             }
 
             return image;
 
-        } catch (URISyntaxException e) {
-            throw new IllegalArgumentException("Invalid image URL: " + imageUrl, e);
-        }
+        }   catch (URISyntaxException e) {
+                throw new IOException("Invalid image URL: " + imageUrl, e);
+            }
     }
 
 

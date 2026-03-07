@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 import com.krister.avatar.core.DiscordImageResizer;
 
+
+
 public class Main {
     //Build with .\gradlew.bat build      
     //Run with .\gradlew.bat :cli:run 
