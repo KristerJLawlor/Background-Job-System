@@ -1,7 +1,9 @@
-**/build/
-**/.gradle/
+.git
+.gitignore
 .gradle
-*.iml
-*.jar
-*.class
+build
+**/build
+node_modules
 *.log
+*.class
+*.tmp

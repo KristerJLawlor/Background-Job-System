@@ -1,24 +1,35 @@
-# Background-Job-System
+## -Background-Job-System-
 
-This is a scalable backend system designed to process submitted jobs asynchronously.
-The job system in its current state downloads and resizes images for small avatar-style size requirements.
-Returned results from processed jobs are then stored in AWS.
-The application is Docker-ized and Deployed on to an AWS ECS.
+A scalable backend system designed to process submitted jobs asynchronously.
+
+The job system currently downloads and resizes images to small avatar-style formats.
+Processed images are stored locally and can be uploaded to AWS storage in production.
+
+The application is Dockerized and designed to be deployed to AWS ECS.
 
 ---------------------------------------
 
-~Features~
+## -Features-
 
-• Parallel image processing using Java thread pools
-• Asynchronous background job execution
-• REST API for job submission and status tracking
-• Multi-step high-quality image resizing
-• Modular monorepo structure (CLI, Core, API)
-• Gradle multi-module project structure
+Parallel image processing using Java thread pools
+
+Asynchronous background job execution
+
+REST API for job submission and status tracking
+
+Multi-step high-quality image resizing
+
+Modular monorepo structure (CLI, Core, API)
+
+Gradle multi-module project structure
+
+Dockerized service for cloud deployment
+
+Health check endpoint for container orchestration
 
 --------------------------------------
 
-~Architecture~
+## -Architecture-
 
 The system is organized into three modules:
 
@@ -32,8 +43,6 @@ A command-line interface used to manually test the system before the API was int
 A Spring Boot application that exposes REST endpoints to submit and monitor jobs.
 
 Job Flow:
-
-Client → API → Job Queue → Worker Thread → Image Processing → File Output
 
 The API immediately returns a Job ID while processing occurs asynchronously.
 
@@ -57,7 +66,7 @@ avatars/
 
 --------------------------------------
 
-~Project Structure~
+## -Project Structure-
 
 Background-Job-System
 
@@ -73,56 +82,131 @@ Spring Boot REST API used to submit and track jobs.
 avatars/
 Output directory for processed images.
 
+Dockerfile
 build.gradle
 settings.gradle
 
 --------------------------------------
 
-~Setup~
+## -Setup-
 
-Clone the repository
+  ## -Prerequisites-
+  To run locally, you need Docker and Git. 
+  If you run without Docker, you will only need Java 21 and Gradle.
 
-git clone https://github.com/yourusername/background-job-system.git
+  ## -Steps-
+  1)Clone the repository
 
-Build the project
+  2)git clone https://github.com/yourusername/background-job-system.git
 
-./gradlew build
+  3)Build the Docker Image:
 
-Run the API
+    docker build -t avatar-api .
 
-./gradlew :api
+  4)Run the container:
 
-The server will start on:
+    docker run -p 8080:8080 avatar-api
 
-http://localhost:8080
+  5)The API will start at:
+
+    http://localhost:8080
 
 --------------------------------------
 
-~API Usage~
+## -API Usage-
 
-Submitting a Job:
+  ## Submitting a Job: 
+  
+    POST /api/jobs
 
-POST /api/jobs
+  ## Example Request:
 
-Example Request Body:
+    curl -X POST http://localhost:8080/api/jobs \
+    -H "Content-Type: application/json" \
+    -d '{"imageUrl":"https://picsum.photos/300"}'
 
-{
-"imageUrl": "https://picsum.photos/300"
-}
+  ## Example Response:
 
-Example Response:
+    {
+    "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2"
+    }
 
-{
-"jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2"
-}
+  ## Checking Job Status:
 
-Checking Job Status:
+    GET /api/jobs/{jobId}
 
-GET /api/jobs/{jobId}
+    Possible statuses:
 
-Possible statuses
+    PENDING
+    RUNNING
+    COMPLETED
+    FAILED
 
-PENDING
-RUNNING
-COMPLETED
-FAILED
+  ## Example request:
+
+    curl http://localhost:8080/api/jobs/{jobId}
+
+  ## Example response:
+
+    {
+      "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2",
+      "status": "COMPLETED",
+      "outputFile": "avatars/avatar.png"
+    }
+
+--------------------------------------
+## -Running without Docker-
+
+  Build the project:
+
+  ./gradlew build
+
+  Run the API locally:
+
+  ./gradlew :api:bootRun
+
+  The server will start on:
+
+  http://localhost:8080
+
+--------------------------------------
+
+## Running the CLI Tool (Optional)
+
+The CLI module allows manual testing of the background job system without the API.
+
+./gradlew :cli:run
+
+--------------------------------------
+
+## Health Check Endpoint
+
+  The service exposes a health endpoint used by container orchestration systems like AWS ECS.
+
+  GET /actuator/health
+
+  Example:
+
+  curl http://localhost:8080/actuator/health
+
+  Response:
+
+  {
+    "status": "UP"
+  }
+
+  --------------------------------------
+
+## Environment Configuration
+
+  The application supports configuration via environment variables.
+
+  Variable	Default	Description
+  PORT	8080	Server port
+  AVATAR_DIR	/app/avatars	Output directory for processed images
+
+  Example:
+
+  docker run -p 8080:8080 \
+  -e AVATAR_DIR=/data/avatars \
+  avatar-api

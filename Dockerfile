@@ -1,14 +1,26 @@
-# Use a JDK image
-FROM eclipse-temurin:21-jdk-jammy
+# ---------- Build Stage ----------
+FROM gradle:8.5-jdk21 AS build
+WORKDIR /build
 
-# Set working directory
+COPY . .
+
+RUN gradle :api:bootJar --no-daemon
+
+# ---------- Runtime Stage ----------
+FROM eclipse-temurin:21-jre-jammy
+
 WORKDIR /app
 
-# Copy only the built boot JAR
-COPY api/build/libs/*.jar app.jar
+# create non-root user to run the application
+RUN useradd -ms /bin/bash appuser
 
-# Expose the port
+COPY --from=build /build/api/build/libs/*.jar app.jar
+
+USER appuser
+
 EXPOSE 8080
 
-# Run the JAR
-ENTRYPOINT ["java", "-jar", "app.jar"]
+HEALTHCHECK --interval=30s --timeout=5s \
+CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+ENTRYPOINT ["java","-jar","app.jar"]

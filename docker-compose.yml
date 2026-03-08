@@ -1,0 +1,13 @@
+services:
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+
+    environment:
+      PORT: 8080
+      AVATAR_DIR: /data/avatars
+
+    volumes:
+      - ./avatars:/data/avatars
