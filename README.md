@@ -27,6 +27,10 @@ Dockerized service for cloud deployment
 
 Health check endpoint for container orchestration
 
+Planned smart face/subject-aware image cropping
+
+Planned manual crop override support
+
 --------------------------------------
 
 ## -Architecture-
@@ -210,3 +214,16 @@ The CLI module allows manual testing of the background job system without the AP
   docker run -p 8080:8080 \
   -e AVATAR_DIR=/data/avatars \
   avatar-api
+
+  --------------------------------------  
+  
+## Roadmap
+
+Planned improvements:
+
+- Redis-backed distributed queue
+- Separate worker service
+- AWS S3 storage
+- Smart face-aware image cropping
+- Manual crop selection support
+- Metrics and monitoring
