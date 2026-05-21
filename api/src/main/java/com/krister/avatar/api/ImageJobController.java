@@ -2,9 +2,11 @@ package com.krister.avatar.api;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
 
 import javax.imageio.ImageIO;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,9 +28,15 @@ public class ImageJobController {
 
     // Submit job
     @PostMapping
-    public Map<String, String> submitJob(@RequestParam String url) {
-        String jobId = jobService.createJob(url);
-        return Map.of("jobId", jobId);
+    public ResponseEntity<?> submitJob(@RequestParam String url) {
+        try {
+            String jobId = jobService.createJob(url);
+            return ResponseEntity.ok(Map.of("jobId", jobId));
+        } catch (RejectedExecutionException e) {
+            // Thrown by AsyncConfig when the executor queue is full; surface as 429 rather than 500
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("error", "Job queue is full — try again later"));
+        }
     }
 
     // Check status

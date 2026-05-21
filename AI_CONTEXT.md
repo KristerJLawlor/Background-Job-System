@@ -235,3 +235,51 @@ Preferred approach:
 1. face detection first
 2. later generalized subject detection
 3. later optional frontend crop UI
+
+# Additional Architectural Notes
+
+## Dockerization
+
+The API module is containerized using Docker multi-stage builds.
+
+The service:
+- runs on Java 21
+- exposes port 8080
+- is intended for AWS ECS deployment
+
+---
+
+## Current Storage Model
+
+Processed avatars are:
+- stored temporarily in memory
+- also written to the local avatars/ directory
+
+Future plans will replace local storage with AWS S3.
+
+---
+
+## Future Image Processing Improvements
+
+Planned enhancements:
+- OpenCV-based face detection
+- smart subject-aware cropping
+- optional manual crop override support
+
+---
+
+## Long-Term Architecture Direction
+
+The project is evolving toward:
+
+Client
+ ->
+API Service
+ ->
+Redis Queue
+ ->
+Worker Services
+ ->
+S3 Storage
+
+The current architecture should gradually evolve toward distributed processing while preserving the modular design.
