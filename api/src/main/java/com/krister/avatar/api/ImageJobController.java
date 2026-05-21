@@ -31,8 +31,11 @@ public class ImageJobController {
     @PostMapping
     public ResponseEntity<?> submitJob(@RequestParam String url) {
         try {
+            UrlValidator.validate(url);
             String jobId = jobService.createJob(url);
             return ResponseEntity.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (RejectedExecutionException e) {
             // Thrown by AsyncConfig when the executor queue is full; surface as 429 rather than 500
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
