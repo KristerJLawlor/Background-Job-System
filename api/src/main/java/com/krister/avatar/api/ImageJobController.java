@@ -10,6 +10,7 @@ import javax.imageio.ImageIO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,14 +23,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class ImageJobController {
 
     private final ImageJobService jobService;
+    private final IpRateLimiter rateLimiter;
 
-    public ImageJobController(ImageJobService jobService) {
+    public ImageJobController(ImageJobService jobService, IpRateLimiter rateLimiter) {
         this.jobService = jobService;
+        this.rateLimiter = rateLimiter;
     }
 
     // Submit job
     @PostMapping
-    public ResponseEntity<?> submitJob(@RequestParam String url) {
+    public ResponseEntity<?> submitJob(@RequestParam String url, HttpServletRequest request) {
+        // Rate limit checked first — before URL validation — so throttled requests never
+        // trigger DNS resolution or any downstream work.
+        if (!rateLimiter.tryConsume(request)) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("error", "Rate limit exceeded — try again later"));
+        }
         try {
             UrlValidator.validate(url);
             String jobId = jobService.createJob(url);

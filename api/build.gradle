@@ -14,6 +14,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation project(':core')
+    // in-memory token-bucket rate limiting; no external broker required at this scale
+    implementation 'com.bucket4j:bucket4j-core:8.10.1'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
