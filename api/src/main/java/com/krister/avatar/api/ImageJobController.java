@@ -1,5 +1,6 @@
 package com.krister.avatar.api;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
@@ -62,9 +63,16 @@ public class ImageJobController {
             return ResponseEntity.badRequest().build();
         }
 
+        // claimResult removes the BufferedImage from the map atomically, freeing memory
+        // immediately. Returns null if the result was already claimed or evicted.
+        BufferedImage image = jobService.claimResult(jobId);
+        if (image == null) {
+            return ResponseEntity.status(HttpStatus.GONE).build();
+        }
+
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(jobService.getResult(jobId), "png", baos);
+            ImageIO.write(image, "png", baos);
 
             return ResponseEntity.ok()
                     .contentType(MediaType.IMAGE_PNG)

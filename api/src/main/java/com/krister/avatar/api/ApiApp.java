@@ -4,9 +4,11 @@ package com.krister.avatar.api;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@EnableAsync //Enable asynchronous processing for background jobs
+@EnableAsync
+@EnableScheduling // required for @Scheduled eviction in ImageJobService
 public class ApiApp {
     public static void main(String[] args) {
         //Start running Spring Boot Application
