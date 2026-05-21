@@ -16,6 +16,8 @@ dependencies {
     implementation project(':core')
     // in-memory token-bucket rate limiting; no external broker required at this scale
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
+    // JSON structured logging; 7.x is required — 8.x needs Logback 1.5.x, Spring Boot 3.2 ships 1.4.x
+    implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }

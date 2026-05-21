@@ -4,10 +4,13 @@ import java.awt.image.BufferedImage;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -17,6 +20,8 @@ import com.krister.avatar.core.DiscordImageResizer;
 
 @Service
 public class ImageJobService {
+
+    private static final Logger log = LoggerFactory.getLogger(ImageJobService.class);
 
     private final Map<String, JobStatus> jobStatuses = new ConcurrentHashMap<>();
     private final Map<String, BufferedImage> results = new ConcurrentHashMap<>();
@@ -28,27 +33,33 @@ public class ImageJobService {
 
     public String createJob(String url) {
         String jobId = UUID.randomUUID().toString();
-        System.out.println("CREATED JOB: " + jobId);
-
         jobStatuses.put(jobId, JobStatus.PENDING);
         createdAt.put(jobId, Instant.now());
+        log.info("Job created jobId={}", jobId);
         processJob(jobId, url);
         return jobId;
     }
 
     @Async
     public void processJob(String jobId, String url) {
+        // MDC makes jobId a top-level field on every log line emitted during this job,
+        // enabling "filter jobId = '...'" queries in CloudWatch Insights / Datadog.
+        MDC.put("jobId", jobId);
         try {
             jobStatuses.put(jobId, JobStatus.PROCESSING);
+            log.info("Job processing started");
 
             BufferedImage resized = DiscordImageResizer.downloadAndResize(url);
 
             results.put(jobId, resized);
             jobStatuses.put(jobId, JobStatus.COMPLETED);
+            log.info("Job completed");
 
         } catch (Exception e) {
-            e.printStackTrace();
             jobStatuses.put(jobId, JobStatus.FAILED);
+            log.error("Job failed", e);
+        } finally {
+            MDC.clear();
         }
     }
 
@@ -64,23 +75,24 @@ public class ImageJobService {
     @Scheduled(fixedDelayString = "${job.result.eviction-interval-ms:60000}")
     public void evictExpiredJobs() {
         Instant cutoff = Instant.now().minus(ttlMinutes, ChronoUnit.MINUTES);
+        AtomicInteger evicted = new AtomicInteger();
         createdAt.entrySet().removeIf(entry -> {
             if (entry.getValue().isBefore(cutoff)) {
                 String jobId = entry.getKey();
                 jobStatuses.remove(jobId);
                 results.remove(jobId);
+                evicted.incrementAndGet();
                 return true;
             }
             return false;
         });
+        if (evicted.get() > 0) {
+            log.info("Evicted expired jobs count={}", evicted.get());
+        }
     }
 
     public JobStatus getStatus(String jobId) {
         return jobStatuses.get(jobId);
-    }
-
-    public Set<String> getAllJobIds() {
-        return jobStatuses.keySet();
     }
 
 }

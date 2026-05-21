@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!--
+      JSON output for any active profile that isn't "dev".
+      LogstashEncoder writes one JSON object per line, including all MDC fields as
+      top-level keys — jobId set via MDC in ImageJobService appears automatically.
+      This format is directly queryable in CloudWatch Insights and Datadog Log Management.
+    -->
+    <springProfile name="!dev">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+        </appender>
+    </springProfile>
+
+    <!--
+      Human-readable output when running with --spring.profiles.active=dev.
+      Keeps local development usable without JSON noise.
+    -->
+    <springProfile name="dev">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+    </springProfile>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+</configuration>

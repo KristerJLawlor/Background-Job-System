@@ -5,6 +5,9 @@ import java.io.ByteArrayOutputStream;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.imageio.ImageIO;
 
 import org.springframework.http.HttpStatus;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/jobs")
 public class ImageJobController {
+
+    private static final Logger log = LoggerFactory.getLogger(ImageJobController.class);
 
     private final ImageJobService jobService;
     private final IpRateLimiter rateLimiter;
@@ -55,11 +60,8 @@ public class ImageJobController {
     // Check status
     @GetMapping("/{jobId}")
     public ResponseEntity<String> getStatus(@PathVariable String jobId) {
-
-        System.out.println("CHECKING JOB: " + jobId);
-        System.out.println("CURRENT JOBS: " + jobService.getAllJobIds());
-
         JobStatus status = jobService.getStatus(jobId);
+        log.debug("Status check jobId={} status={}", jobId, status);
 
         if (status == null) {
             return ResponseEntity.notFound().build();
