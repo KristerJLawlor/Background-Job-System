@@ -1,13 +1,48 @@
+name: background-job-system
+
 services:
 
   api:
     build: .
     ports:
-      - "8080:8080"
-
+      - "${PORT:-8080}:8080"
     environment:
       PORT: 8080
-      AVATAR_DIR: /data/avatars
-
+      AVATAR_DIR: /app/avatars
+      # point at the jaeger service by name — overrides the localhost:4318 default
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
+      TRACING_SAMPLE_RATE: "1.0"
     volumes:
-      - ./avatars:/data/avatars
+      - avatars:/app/avatars
+    depends_on:
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    restart: on-failure
+
+  # Redis is wired up here ahead of the queue migration so the service topology is
+  # already correct when the in-memory queue is replaced with a Redis-backed one.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Jaeger all-in-one receives OTLP traces from the api and serves the trace UI.
+  # Open http://localhost:16686 to browse traces after submitting jobs.
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4318:4318"    # OTLP/HTTP receiver
+    restart: unless-stopped
+
+volumes:
+  # named volume keeps processed avatars across container restarts
+  avatars:
