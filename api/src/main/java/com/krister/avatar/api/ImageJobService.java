@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -36,12 +38,14 @@ public class ImageJobService {
     private final AtomicInteger activeJobs = new AtomicInteger(0);
 
     private final MeterRegistry meterRegistry;
+    private final Tracer tracer;
 
     @Value("${job.result.ttl-minutes:60}")
     private long ttlMinutes;
 
-    public ImageJobService(MeterRegistry meterRegistry) {
+    public ImageJobService(MeterRegistry meterRegistry, Tracer tracer) {
         this.meterRegistry = meterRegistry;
+        this.tracer = tracer;
         // Gauge is registered once at construction; Micrometer samples activeJobs on each scrape.
         Gauge.builder("jobs.active", activeJobs, AtomicInteger::get)
                 .description("Jobs currently being processed by the worker pool")
@@ -62,26 +66,37 @@ public class ImageJobService {
         // MDC makes jobId a top-level field on every log line emitted during this job,
         // enabling "filter jobId = '...'" queries in CloudWatch Insights / Datadog.
         MDC.put("jobId", jobId);
-        // Timer.Sample captures the start instant; stopped in the finally-adjacent blocks
-        // below so the recorded duration includes both success and failure paths.
         Timer.Sample sample = Timer.start(meterRegistry);
         activeJobs.incrementAndGet();
-        try {
-            jobStatuses.put(jobId, JobStatus.PROCESSING);
-            log.info("Job processing started");
 
-            BufferedImage resized = DiscordImageResizer.downloadAndResize(url);
+        // nextSpan() creates a child of the span restored by ContextPropagatingTaskDecorator
+        // (the POST /api/jobs request span). withSpan() sets it as the active span on this
+        // thread, so traceId/spanId flow into MDC and appear in every log line below.
+        Span span = tracer.nextSpan().name("job.process").start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            span.tag("job.id", jobId);
 
-            results.put(jobId, resized);
-            jobStatuses.put(jobId, JobStatus.COMPLETED);
-            log.info("Job completed");
-            sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "completed"));
+            try {
+                jobStatuses.put(jobId, JobStatus.PROCESSING);
+                log.info("Job processing started");
 
-        } catch (Exception e) {
-            jobStatuses.put(jobId, JobStatus.FAILED);
-            log.error("Job failed", e);
-            sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "failed"));
+                BufferedImage resized = DiscordImageResizer.downloadAndResize(url);
+
+                results.put(jobId, resized);
+                jobStatuses.put(jobId, JobStatus.COMPLETED);
+                log.info("Job completed");
+                span.tag("job.outcome", "completed");
+                sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "completed"));
+
+            } catch (Exception e) {
+                span.error(e);
+                span.tag("job.outcome", "failed");
+                jobStatuses.put(jobId, JobStatus.FAILED);
+                log.error("Job failed", e);
+                sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "failed"));
+            }
         } finally {
+            span.end();
             activeJobs.decrementAndGet();
             MDC.clear();
         }

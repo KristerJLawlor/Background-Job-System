@@ -3,6 +3,7 @@ package com.krister.avatar.api;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.support.ContextPropagatingTaskDecorator;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -32,6 +33,11 @@ public class AsyncConfig implements AsyncConfigurer {
         executor.setQueueCapacity(queueCapacity);  // backlog before max threads kick in
         // prefix makes these threads identifiable in logs and thread dumps
         executor.setThreadNamePrefix("job-worker-");
+        // Captures the Micrometer Observation/trace context on the submitting thread and
+        // restores it on the worker thread before the task runs. Without this, @Async breaks
+        // the trace — processJob() would start a disconnected root span instead of a child
+        // of the HTTP request span that triggered the job.
+        executor.setTaskDecorator(new ContextPropagatingTaskDecorator());
         // when both queue and max threads are exhausted, throw so the controller can return 429
         executor.setRejectedExecutionHandler((r, e) -> {
             throw new RejectedExecutionException("Job queue is full — try again later");
