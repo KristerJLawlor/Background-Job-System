@@ -8,6 +8,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -28,8 +31,22 @@ public class ImageJobService {
     // tracks creation time for each job so the eviction sweep knows what to expire
     private final Map<String, Instant> createdAt = new ConcurrentHashMap<>();
 
+    // AtomicInteger used as both the gauge backing value and the live counter —
+    // Micrometer reads it directly, so the gauge always reflects the real-time value.
+    private final AtomicInteger activeJobs = new AtomicInteger(0);
+
+    private final MeterRegistry meterRegistry;
+
     @Value("${job.result.ttl-minutes:60}")
     private long ttlMinutes;
+
+    public ImageJobService(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+        // Gauge is registered once at construction; Micrometer samples activeJobs on each scrape.
+        Gauge.builder("jobs.active", activeJobs, AtomicInteger::get)
+                .description("Jobs currently being processed by the worker pool")
+                .register(meterRegistry);
+    }
 
     public String createJob(String url) {
         String jobId = UUID.randomUUID().toString();
@@ -45,6 +62,10 @@ public class ImageJobService {
         // MDC makes jobId a top-level field on every log line emitted during this job,
         // enabling "filter jobId = '...'" queries in CloudWatch Insights / Datadog.
         MDC.put("jobId", jobId);
+        // Timer.Sample captures the start instant; stopped in the finally-adjacent blocks
+        // below so the recorded duration includes both success and failure paths.
+        Timer.Sample sample = Timer.start(meterRegistry);
+        activeJobs.incrementAndGet();
         try {
             jobStatuses.put(jobId, JobStatus.PROCESSING);
             log.info("Job processing started");
@@ -54,11 +75,14 @@ public class ImageJobService {
             results.put(jobId, resized);
             jobStatuses.put(jobId, JobStatus.COMPLETED);
             log.info("Job completed");
+            sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "completed"));
 
         } catch (Exception e) {
             jobStatuses.put(jobId, JobStatus.FAILED);
             log.error("Job failed", e);
+            sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "failed"));
         } finally {
+            activeJobs.decrementAndGet();
             MDC.clear();
         }
     }
@@ -87,6 +111,7 @@ public class ImageJobService {
             return false;
         });
         if (evicted.get() > 0) {
+            meterRegistry.counter("jobs.evicted").increment(evicted.get());
             log.info("Evicted expired jobs count={}", evicted.get());
         }
     }

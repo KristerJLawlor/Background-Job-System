@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,10 +30,13 @@ public class ImageJobController {
 
     private final ImageJobService jobService;
     private final IpRateLimiter rateLimiter;
+    private final MeterRegistry meterRegistry;
 
-    public ImageJobController(ImageJobService jobService, IpRateLimiter rateLimiter) {
+    public ImageJobController(ImageJobService jobService, IpRateLimiter rateLimiter,
+                              MeterRegistry meterRegistry) {
         this.jobService = jobService;
         this.rateLimiter = rateLimiter;
+        this.meterRegistry = meterRegistry;
     }
 
     // Submit job
@@ -41,17 +45,22 @@ public class ImageJobController {
         // Rate limit checked first — before URL validation — so throttled requests never
         // trigger DNS resolution or any downstream work.
         if (!rateLimiter.tryConsume(request)) {
+            // "reason" tag lets dashboards break rejections down by cause without separate metrics
+            meterRegistry.counter("jobs.rejected", "reason", "rate_limited").increment();
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("error", "Rate limit exceeded — try again later"));
         }
         try {
             UrlValidator.validate(url);
             String jobId = jobService.createJob(url);
+            meterRegistry.counter("jobs.submitted").increment();
             return ResponseEntity.ok(Map.of("jobId", jobId));
         } catch (IllegalArgumentException e) {
+            meterRegistry.counter("jobs.rejected", "reason", "invalid_url").increment();
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (RejectedExecutionException e) {
             // Thrown by AsyncConfig when the executor queue is full; surface as 429 rather than 500
+            meterRegistry.counter("jobs.rejected", "reason", "queue_full").increment();
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("error", "Job queue is full — try again later"));
         }
