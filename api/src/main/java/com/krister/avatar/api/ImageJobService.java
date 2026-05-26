@@ -1,12 +1,11 @@
 package com.krister.avatar.api;
 
 import java.awt.image.BufferedImage;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
+import java.io.ByteArrayOutputStream;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.imageio.ImageIO;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -17,8 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.krister.avatar.core.DiscordImageResizer;
@@ -28,25 +25,26 @@ public class ImageJobService {
 
     private static final Logger log = LoggerFactory.getLogger(ImageJobService.class);
 
-    private final Map<String, JobStatus> jobStatuses = new ConcurrentHashMap<>();
-    private final Map<String, BufferedImage> results = new ConcurrentHashMap<>();
-    // tracks creation time for each job so the eviction sweep knows what to expire
-    private final Map<String, Instant> createdAt = new ConcurrentHashMap<>();
-
-    // AtomicInteger used as both the gauge backing value and the live counter —
-    // Micrometer reads it directly, so the gauge always reflects the real-time value.
-    private final AtomicInteger activeJobs = new AtomicInteger(0);
-
+    private final RedisJobStore jobStore;
+    private final S3ResultStore s3ResultStore;
     private final MeterRegistry meterRegistry;
     private final Tracer tracer;
 
-    @Value("${job.result.ttl-minutes:60}")
-    private long ttlMinutes;
+    @Value("${job.retry.max-attempts:3}")
+    private int maxAttempts;
 
-    public ImageJobService(MeterRegistry meterRegistry, Tracer tracer) {
+    @Value("${job.retry.base-delay-seconds:10}")
+    private long baseDelaySeconds;
+
+    // Tracks in-flight jobs on this instance; Micrometer samples it directly as a gauge.
+    private final AtomicInteger activeJobs = new AtomicInteger(0);
+
+    public ImageJobService(RedisJobStore jobStore, S3ResultStore s3ResultStore,
+                           MeterRegistry meterRegistry, Tracer tracer) {
+        this.jobStore = jobStore;
+        this.s3ResultStore = s3ResultStore;
         this.meterRegistry = meterRegistry;
         this.tracer = tracer;
-        // Gauge is registered once at construction; Micrometer samples activeJobs on each scrape.
         Gauge.builder("jobs.active", activeJobs, AtomicInteger::get)
                 .description("Jobs currently being processed by the worker pool")
                 .register(meterRegistry);
@@ -54,45 +52,55 @@ public class ImageJobService {
 
     public String createJob(String url) {
         String jobId = UUID.randomUUID().toString();
-        jobStatuses.put(jobId, JobStatus.PENDING);
-        createdAt.put(jobId, Instant.now());
+        jobStore.setStatus(jobId, JobStatus.PENDING);
+        jobStore.enqueue(jobId, url);
         log.info("Job created jobId={}", jobId);
-        processJob(jobId, url);
         return jobId;
     }
 
-    @Async
-    public void processJob(String jobId, String url) {
-        // MDC makes jobId a top-level field on every log line emitted during this job,
-        // enabling "filter jobId = '...'" queries in CloudWatch Insights / Datadog.
+    public void processJob(String jobId, String url, int attempt) {
         MDC.put("jobId", jobId);
+        MDC.put("attempt", String.valueOf(attempt));
         Timer.Sample sample = Timer.start(meterRegistry);
         activeJobs.incrementAndGet();
 
-        // nextSpan() creates a child of the span restored by ContextPropagatingTaskDecorator
-        // (the POST /api/jobs request span). withSpan() sets it as the active span on this
-        // thread, so traceId/spanId flow into MDC and appear in every log line below.
         Span span = tracer.nextSpan().name("job.process").start();
         try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
             span.tag("job.id", jobId);
+            span.tag("job.attempt", String.valueOf(attempt));
 
             try {
-                jobStatuses.put(jobId, JobStatus.PROCESSING);
+                jobStore.setStatus(jobId, JobStatus.PROCESSING);
                 log.info("Job processing started");
 
                 BufferedImage resized = DiscordImageResizer.downloadAndResize(url);
 
-                results.put(jobId, resized);
-                jobStatuses.put(jobId, JobStatus.COMPLETED);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(resized, "png", baos);
+                s3ResultStore.storeResult(jobId, baos.toByteArray());
+                jobStore.setStatus(jobId, JobStatus.COMPLETED);
+
                 log.info("Job completed");
                 span.tag("job.outcome", "completed");
                 sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "completed"));
 
             } catch (Exception e) {
                 span.error(e);
-                span.tag("job.outcome", "failed");
-                jobStatuses.put(jobId, JobStatus.FAILED);
-                log.error("Job failed", e);
+
+                if (attempt < maxAttempts) {
+                    // Exponential backoff: 10s, 20s, 40s for attempts 1, 2, 3 (with defaults)
+                    long delaySeconds = baseDelaySeconds * (1L << (attempt - 1));
+                    jobStore.scheduleRetry(jobId, url, attempt + 1, delaySeconds);
+                    jobStore.setStatus(jobId, JobStatus.PENDING);
+                    meterRegistry.counter("jobs.retried").increment();
+                    span.tag("job.outcome", "retrying");
+                    log.warn("Job failed, scheduling retry nextAttempt={} delaySeconds={}", attempt + 1, delaySeconds, e);
+                } else {
+                    jobStore.setStatus(jobId, JobStatus.FAILED);
+                    span.tag("job.outcome", "failed");
+                    log.error("Job failed after max attempts attempt={}", attempt, e);
+                }
+
                 sample.stop(meterRegistry.timer("jobs.processing.duration", "status", "failed"));
             }
         } finally {
@@ -102,37 +110,11 @@ public class ImageJobService {
         }
     }
 
-    // Removes and returns the image in one atomic step so the BufferedImage is freed
-    // immediately after the client claims it, rather than lingering until the next sweep.
-    // Returns null if the result was already claimed or has not completed yet.
-    public BufferedImage claimResult(String jobId) {
-        return results.remove(jobId);
-    }
-
-    // Periodic sweep that removes all three map entries for jobs older than ttlMinutes.
-    // Catches jobs whose results were never retrieved (failed, abandoned, or unclaimed).
-    @Scheduled(fixedDelayString = "${job.result.eviction-interval-ms:60000}")
-    public void evictExpiredJobs() {
-        Instant cutoff = Instant.now().minus(ttlMinutes, ChronoUnit.MINUTES);
-        AtomicInteger evicted = new AtomicInteger();
-        createdAt.entrySet().removeIf(entry -> {
-            if (entry.getValue().isBefore(cutoff)) {
-                String jobId = entry.getKey();
-                jobStatuses.remove(jobId);
-                results.remove(jobId);
-                evicted.incrementAndGet();
-                return true;
-            }
-            return false;
-        });
-        if (evicted.get() > 0) {
-            meterRegistry.counter("jobs.evicted").increment(evicted.get());
-            log.info("Evicted expired jobs count={}", evicted.get());
-        }
+    public byte[] claimResult(String jobId) {
+        return s3ResultStore.claimResult(jobId);
     }
 
     public JobStatus getStatus(String jobId) {
-        return jobStatuses.get(jobId);
+        return jobStore.getStatus(jobId);
     }
-
 }
