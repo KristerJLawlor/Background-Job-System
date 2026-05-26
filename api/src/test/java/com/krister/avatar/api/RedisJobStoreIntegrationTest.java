@@ -1,10 +1,11 @@
 package com.krister.avatar.api;
 
+import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.RedisJobStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -30,10 +31,6 @@ class RedisJobStoreIntegrationTest {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     }
-
-    // Prevent background threads from consuming jobs placed in the queue during tests
-    @MockBean JobWorkerPool jobWorkerPool;
-    @MockBean RetryPromoter retryPromoter;
 
     @Autowired RedisJobStore jobStore;
     @Autowired StringRedisTemplate stringRedis;
