@@ -9,6 +9,7 @@ services:
     environment:
       PORT: 8080
       AVATAR_DIR: /app/avatars
+      REDIS_HOST: redis
       # point at the jaeger service by name — overrides the localhost:4318 default
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       TRACING_SAMPLE_RATE: "1.0"

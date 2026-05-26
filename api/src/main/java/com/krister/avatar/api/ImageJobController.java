@@ -1,15 +1,10 @@
 package com.krister.avatar.api;
 
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.util.Map;
-import java.util.concurrent.RejectedExecutionException;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.imageio.ImageIO;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -58,11 +53,6 @@ public class ImageJobController {
         } catch (IllegalArgumentException e) {
             meterRegistry.counter("jobs.rejected", "reason", "invalid_url").increment();
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (RejectedExecutionException e) {
-            // Thrown by AsyncConfig when the executor queue is full; surface as 429 rather than 500
-            meterRegistry.counter("jobs.rejected", "reason", "queue_full").increment();
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                    .body(Map.of("error", "Job queue is full — try again later"));
         }
     }
 
@@ -86,24 +76,16 @@ public class ImageJobController {
             return ResponseEntity.badRequest().build();
         }
 
-        // claimResult removes the BufferedImage from the map atomically, freeing memory
-        // immediately. Returns null if the result was already claimed or evicted.
-        BufferedImage image = jobService.claimResult(jobId);
-        if (image == null) {
+        // claimResult atomically removes the PNG bytes from Redis, freeing memory immediately.
+        // Returns null if the result was already claimed or expired.
+        byte[] pngBytes = jobService.claimResult(jobId);
+        if (pngBytes == null) {
             return ResponseEntity.status(HttpStatus.GONE).build();
         }
 
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(image, "png", baos);
-
-            return ResponseEntity.ok()
-                    .contentType(MediaType.IMAGE_PNG)
-                    .body(baos.toByteArray());
-
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .body(pngBytes);
     }
 
     @GetMapping("/test")
