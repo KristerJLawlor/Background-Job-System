@@ -22,6 +22,7 @@ dependencies {
     // JSON structured logging; 7.x is required — 8.x needs Logback 1.5.x, Spring Boot 3.2 ships 1.4.x
     implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
     // OTel bridge — versions managed by Spring Boot BOM, no explicit version needed
+    implementation 'io.micrometer:micrometer-registry-prometheus'
     implementation 'io.micrometer:micrometer-tracing-bridge-otel'
     implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 

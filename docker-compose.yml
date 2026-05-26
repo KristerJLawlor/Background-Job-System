@@ -59,6 +59,31 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Prometheus scrapes /actuator/prometheus every 15s. Open http://localhost:9090.
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - "./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"
+    restart: unless-stopped
+
+  # Grafana visualises Prometheus metrics. Open http://localhost:3000 (admin/admin).
+  # The datasource and overview dashboard are provisioned automatically on startup.
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - "./grafana/provisioning:/etc/grafana/provisioning"
+      - "./grafana/dashboards:/etc/grafana/dashboards"
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
   # Jaeger all-in-one receives OTLP traces from the api and serves the trace UI.
   # Open http://localhost:16686 to browse traces after submitting jobs.
   jaeger:
@@ -71,3 +96,5 @@ services:
 volumes:
   # named volume keeps processed avatars across container restarts
   avatars:
+  # grafana internal state (plugins, user preferences, alert state)
+  grafana-data:
