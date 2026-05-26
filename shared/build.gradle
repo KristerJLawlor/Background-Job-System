@@ -1,0 +1,30 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.boot:spring-boot-dependencies:3.2.1"
+    }
+}
+
+dependencies {
+    // api scope: RedisJobStore takes StringRedisTemplate — consumers need it on their compile path
+    api 'org.springframework.boot:spring-boot-starter-data-redis'
+    // Jackson used in RedisJobStore for JSON serialization of JobRequest
+    api 'com.fasterxml.jackson.core:jackson-databind'
+    // implementation scope: S3 types are internal to AwsConfig / S3ResultStore
+    implementation platform('software.amazon.awssdk:bom:2.44.13')
+    implementation 'software.amazon.awssdk:s3'
+}

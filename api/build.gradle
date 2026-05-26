@@ -13,9 +13,7 @@ java {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    implementation platform('software.amazon.awssdk:bom:2.44.13')
-    implementation 'software.amazon.awssdk:s3'
+    implementation project(':shared')
     implementation project(':core')
     // in-memory token-bucket rate limiting; no external broker required at this scale
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
@@ -29,6 +27,8 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.testcontainers:testcontainers'
     testImplementation 'org.testcontainers:junit-jupiter'
+    // RedisJobStoreIntegrationTest uses StringRedisTemplate directly
+    testImplementation 'org.springframework.boot:spring-boot-starter-data-redis'
 }
 
 tasks.named('test') {

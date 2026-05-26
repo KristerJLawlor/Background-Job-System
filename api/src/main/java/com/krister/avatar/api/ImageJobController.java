@@ -2,6 +2,7 @@ package com.krister.avatar.api;
 
 import java.util.Map;
 
+import com.krister.avatar.shared.JobStatus;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
