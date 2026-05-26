@@ -43,7 +43,7 @@ public class JobWorkerPool {
             try {
                 RedisJobStore.JobRequest req = jobStore.dequeue(Duration.ofSeconds(2));
                 if (req == null) continue;
-                jobService.processJob(req.jobId(), req.url());
+                jobService.processJob(req.jobId(), req.url(), req.attempt());
             } catch (Exception e) {
                 log.error("Worker loop error", e);
             }

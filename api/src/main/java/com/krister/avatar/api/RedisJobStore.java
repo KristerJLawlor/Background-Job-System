@@ -8,11 +8,13 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.Set;
 
 @Component
 public class RedisJobStore {
 
     static final String QUEUE_KEY = "jobs:queue";
+    private static final String RETRY_SET_KEY = "jobs:retry";
     private static final String STATUS_KEY = "job:%s:status";
     private static final String RESULT_KEY = "job:%s:result";
 
@@ -54,11 +56,36 @@ public class RedisJobStore {
 
     public void enqueue(String jobId, String url) {
         try {
-            String payload = objectMapper.writeValueAsString(new JobRequest(jobId, url));
+            String payload = objectMapper.writeValueAsString(new JobRequest(jobId, url, 1));
             stringRedis.opsForList().leftPush(QUEUE_KEY, payload);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize job request", e);
         }
+    }
+
+    // Schedules a retry by adding the job to the sorted set with score = fire-at epoch second.
+    // The RetryPromoter thread moves it back to jobs:queue once the delay has elapsed.
+    public void scheduleRetry(String jobId, String url, int attempt, long delaySeconds) {
+        try {
+            String payload = objectMapper.writeValueAsString(new JobRequest(jobId, url, attempt));
+            double fireAt = System.currentTimeMillis() / 1000.0 + delaySeconds;
+            stringRedis.opsForZSet().add(RETRY_SET_KEY, payload, fireAt);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize retry request", e);
+        }
+    }
+
+    // Moves all due retries (score <= now) from the retry sorted set into the work queue.
+    // Returns the number of jobs promoted.
+    public int promoteRetries() {
+        double now = System.currentTimeMillis() / 1000.0;
+        Set<String> due = stringRedis.opsForZSet().rangeByScore(RETRY_SET_KEY, 0, now);
+        if (due == null || due.isEmpty()) return 0;
+        for (String payload : due) {
+            stringRedis.opsForList().leftPush(QUEUE_KEY, payload);
+            stringRedis.opsForZSet().remove(RETRY_SET_KEY, payload);
+        }
+        return due.size();
     }
 
     // Blocking pop with timeout — returns null if no job arrives within the timeout window.
@@ -72,5 +99,5 @@ public class RedisJobStore {
         }
     }
 
-    public record JobRequest(String jobId, String url) {}
+    public record JobRequest(String jobId, String url, int attempt) {}
 }
