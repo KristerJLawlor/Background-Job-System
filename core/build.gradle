@@ -2,12 +2,20 @@ plugins {
     id 'java-library'
 }
 
-
 java {
-    sourceCompatibility = JavaVersion.VERSION_14    //requires Java 14 or above for case switch expressions
-    targetCompatibility = JavaVersion.VERSION_14
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
 }
 
 repositories {
     mavenCentral()
+}
+
+dependencies {
+    implementation 'org.bytedeco:javacv:1.5.11'
+    implementation 'org.bytedeco:opencv:4.10.0-1.5.11'
+    // Native binaries for the two target environments: Docker (Linux) and local dev (Windows)
+    runtimeOnly 'org.bytedeco:opencv:4.10.0-1.5.11:linux-x86_64'
+    runtimeOnly 'org.bytedeco:opencv:4.10.0-1.5.11:windows-x86_64'
 }

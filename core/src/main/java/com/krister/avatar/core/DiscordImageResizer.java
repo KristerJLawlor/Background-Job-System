@@ -21,8 +21,7 @@ public class DiscordImageResizer {
     //Target width and height for Discord avatars are 128x128 pixels
     private static final int DISCORD_IMAGE_DIMENSION = 128;
 
-    public static BufferedImage downloadAndResize(String imageUrl) throws IOException{
-        //Call downloadImage and resizeImage methods to get the final processed image
+    public static BufferedImage downloadAndResize(String imageUrl) throws IOException {
         BufferedImage originalImage = downloadImage(imageUrl);
         return resizeImage(originalImage, DISCORD_IMAGE_DIMENSION, DISCORD_IMAGE_DIMENSION);
     }
@@ -64,9 +63,8 @@ public class DiscordImageResizer {
     public static BufferedImage resizeImage(
         BufferedImage originalImage, int targetWidth, int targetHeight) {
 
-        //First center crop the image to make it square, since Discord avatars are square
-        //Plus, this prevents distortion when resizing non-square images
-        BufferedImage croppedImage = centerCrop(originalImage);
+        // Smart crop: detect faces and crop around the subject; falls back to center crop
+        BufferedImage croppedImage = SmartCropper.smartCrop(originalImage);
 
         //Perform a multi-step downscaling to maintain quality (reduce aliasing) as we reach our target size
         int w = croppedImage.getWidth();
