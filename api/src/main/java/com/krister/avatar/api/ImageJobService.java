@@ -26,6 +26,7 @@ public class ImageJobService {
     private static final Logger log = LoggerFactory.getLogger(ImageJobService.class);
 
     private final RedisJobStore jobStore;
+    private final S3ResultStore s3ResultStore;
     private final MeterRegistry meterRegistry;
     private final Tracer tracer;
 
@@ -38,8 +39,10 @@ public class ImageJobService {
     // Tracks in-flight jobs on this instance; Micrometer samples it directly as a gauge.
     private final AtomicInteger activeJobs = new AtomicInteger(0);
 
-    public ImageJobService(RedisJobStore jobStore, MeterRegistry meterRegistry, Tracer tracer) {
+    public ImageJobService(RedisJobStore jobStore, S3ResultStore s3ResultStore,
+                           MeterRegistry meterRegistry, Tracer tracer) {
         this.jobStore = jobStore;
+        this.s3ResultStore = s3ResultStore;
         this.meterRegistry = meterRegistry;
         this.tracer = tracer;
         Gauge.builder("jobs.active", activeJobs, AtomicInteger::get)
@@ -74,7 +77,7 @@ public class ImageJobService {
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 ImageIO.write(resized, "png", baos);
-                jobStore.storeResult(jobId, baos.toByteArray());
+                s3ResultStore.storeResult(jobId, baos.toByteArray());
                 jobStore.setStatus(jobId, JobStatus.COMPLETED);
 
                 log.info("Job completed");
@@ -108,7 +111,7 @@ public class ImageJobService {
     }
 
     public byte[] claimResult(String jobId) {
-        return jobStore.claimResult(jobId);
+        return s3ResultStore.claimResult(jobId);
     }
 
     public JobStatus getStatus(String jobId) {

@@ -14,7 +14,7 @@
     </springProfile>
 
     <!--
-      Human-readable output when running with --spring.profiles.active=dev.
+      Human-readable output when running with the dev Spring profile active.
       Keeps local development usable without JSON noise.
     -->
     <springProfile name="dev">

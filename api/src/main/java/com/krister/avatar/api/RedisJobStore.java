@@ -3,7 +3,6 @@ package com.krister.avatar.api;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -16,20 +15,15 @@ public class RedisJobStore {
     static final String QUEUE_KEY = "jobs:queue";
     private static final String RETRY_SET_KEY = "jobs:retry";
     private static final String STATUS_KEY = "job:%s:status";
-    private static final String RESULT_KEY = "job:%s:result";
 
     private final StringRedisTemplate stringRedis;
-    private final RedisTemplate<String, byte[]> bytesRedis;
     private final ObjectMapper objectMapper;
 
     @Value("${job.result.ttl-minutes:60}")
     private long ttlMinutes;
 
-    public RedisJobStore(StringRedisTemplate stringRedis,
-                         RedisTemplate<String, byte[]> bytesRedis,
-                         ObjectMapper objectMapper) {
+    public RedisJobStore(StringRedisTemplate stringRedis, ObjectMapper objectMapper) {
         this.stringRedis = stringRedis;
-        this.bytesRedis = bytesRedis;
         this.objectMapper = objectMapper;
     }
 
@@ -41,17 +35,6 @@ public class RedisJobStore {
     public JobStatus getStatus(String jobId) {
         String val = stringRedis.opsForValue().get(STATUS_KEY.formatted(jobId));
         return val == null ? null : JobStatus.valueOf(val);
-    }
-
-    public void storeResult(String jobId, byte[] pngBytes) {
-        bytesRedis.opsForValue().set(
-                RESULT_KEY.formatted(jobId), pngBytes, Duration.ofMinutes(ttlMinutes));
-    }
-
-    // Atomically removes and returns the result so memory is freed on claim.
-    // Returns null if the result was already claimed, expired, or not yet ready.
-    public byte[] claimResult(String jobId) {
-        return bytesRedis.opsForValue().getAndDelete(RESULT_KEY.formatted(jobId));
     }
 
     public void enqueue(String jobId, String url) {

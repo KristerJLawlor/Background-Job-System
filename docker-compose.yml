@@ -13,10 +13,17 @@ services:
       # point at the jaeger service by name — overrides the localhost:4318 default
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       TRACING_SAMPLE_RATE: "1.0"
+      S3_BUCKET_NAME: avatar-results
+      AWS_REGION: us-east-1
+      S3_ENDPOINT_OVERRIDE: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
     volumes:
       - avatars:/app/avatars
     depends_on:
       redis:
+        condition: service_healthy
+      localstack:
         condition: service_healthy
       jaeger:
         condition: service_started
@@ -33,6 +40,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    restart: unless-stopped
+
+  # LocalStack emulates AWS S3 locally. The init script creates the avatar-results bucket
+  # on startup. Use awslocal (bundled in the image) for manual inspection.
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3
+    volumes:
+      - "./scripts/localstack-init.sh:/etc/localstack/init/ready.d/localstack-init.sh"
+    healthcheck:
+      test: ["CMD", "awslocal", "s3", "ls"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # Jaeger all-in-one receives OTLP traces from the api and serves the trace UI.
