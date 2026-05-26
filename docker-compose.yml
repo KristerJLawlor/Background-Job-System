@@ -13,6 +13,7 @@ services:
       # point at the jaeger service by name — overrides the localhost:4318 default
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       TRACING_SAMPLE_RATE: "1.0"
+      API_KEY: ${API_KEY:changeme}
       S3_BUCKET_NAME: avatar-results
       AWS_REGION: us-east-1
       S3_ENDPOINT_OVERRIDE: http://localstack:4566

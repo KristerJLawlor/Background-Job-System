@@ -88,9 +88,4 @@ public class ImageJobController {
                 .body(pngBytes);
     }
 
-    @GetMapping("/test")
-public String test() {
-    return "CONTROLLER IS ACTIVE";
-}
-
 }
