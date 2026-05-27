@@ -86,7 +86,7 @@ class JobProcessorTest {
     }
 
     @Test
-    void process_failureOnFinalAttempt_setsFailed() {
+    void process_failureOnFinalAttempt_setsFailedAndPushesToDlq() {
         try (MockedStatic<DiscordImageResizer> mocked = mockStatic(DiscordImageResizer.class)) {
             mocked.when(() -> DiscordImageResizer.downloadAndResize(anyString()))
                     .thenThrow(new IOException("network error"));
@@ -95,6 +95,7 @@ class JobProcessorTest {
         }
 
         verify(jobStore).setStatus("job-1", JobStatus.FAILED);
+        verify(jobStore).pushToDlq(eq("job-1"), eq("https://1.1.1.1/img.png"), eq(3), anyString());
         verify(jobStore, never()).scheduleRetry(any(), any(), anyInt(), anyLong());
     }
 }

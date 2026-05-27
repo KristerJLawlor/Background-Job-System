@@ -7,6 +7,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Component
@@ -15,6 +19,7 @@ public class RedisJobStore {
     public static final String QUEUE_KEY = "jobs:queue";
     private static final String RETRY_SET_KEY = "jobs:retry";
     private static final String STATUS_KEY = "job:%s:status";
+    private static final String DLQ_KEY = "jobs:dlq";
 
     private final StringRedisTemplate stringRedis;
     private final ObjectMapper objectMapper;
@@ -82,5 +87,50 @@ public class RedisJobStore {
         }
     }
 
+    public void pushToDlq(String jobId, String url, int attempts, String error) {
+        try {
+            DlqEntry entry = new DlqEntry(jobId, url, attempts, Instant.now().getEpochSecond(), error);
+            stringRedis.opsForHash().put(DLQ_KEY, jobId, objectMapper.writeValueAsString(entry));
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize DLQ entry", e);
+        }
+    }
+
+    public List<DlqEntry> listDlq() {
+        Map<Object, Object> entries = stringRedis.opsForHash().entries(DLQ_KEY);
+        return entries.values().stream()
+                .map(v -> {
+                    try {
+                        return objectMapper.readValue((String) v, DlqEntry.class);
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException("Failed to deserialize DLQ entry", e);
+                    }
+                })
+                .sorted(Comparator.comparingLong(DlqEntry::failedAt).reversed())
+                .toList();
+    }
+
+    public boolean requeueFromDlq(String jobId) {
+        String raw = (String) stringRedis.opsForHash().get(DLQ_KEY, jobId);
+        if (raw == null) return false;
+        try {
+            DlqEntry entry = objectMapper.readValue(raw, DlqEntry.class);
+            stringRedis.opsForHash().delete(DLQ_KEY, jobId);
+            String payload = objectMapper.writeValueAsString(new JobRequest(jobId, entry.url(), 1));
+            stringRedis.opsForList().leftPush(QUEUE_KEY, payload);
+            setStatus(jobId, JobStatus.PENDING);
+            return true;
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to requeue from DLQ", e);
+        }
+    }
+
+    public boolean removeFromDlq(String jobId) {
+        Long deleted = stringRedis.opsForHash().delete(DLQ_KEY, jobId);
+        return deleted != null && deleted > 0;
+    }
+
     public record JobRequest(String jobId, String url, int attempt) {}
+
+    public record DlqEntry(String jobId, String url, int attempts, long failedAt, String error) {}
 }
