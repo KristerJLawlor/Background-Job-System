@@ -2,10 +2,12 @@ package com.krister.avatar.api;
 
 import com.krister.avatar.shared.JobStatus;
 import com.krister.avatar.shared.RedisJobStore;
+import com.krister.avatar.shared.S3ResultStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -31,6 +33,9 @@ class RedisJobStoreIntegrationTest {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     }
+
+    // S3ResultStore.@PostConstruct would try to reach S3 — replace it with a mock.
+    @MockBean S3ResultStore s3ResultStore;
 
     @Autowired RedisJobStore jobStore;
     @Autowired StringRedisTemplate stringRedis;
@@ -120,5 +125,65 @@ class RedisJobStoreIntegrationTest {
 
         RedisJobStore.JobRequest req = jobStore.dequeue(Duration.ofMillis(500));
         assertThat(req.jobId()).isEqualTo("job-due");
+    }
+
+    // --- DLQ ---
+
+    @Test
+    void pushToDlq_appearsInList() {
+        jobStore.pushToDlq("job-1", "https://1.1.1.1/img.png", 3, "network error");
+
+        var entries = jobStore.listDlq();
+        assertThat(entries).hasSize(1);
+        assertThat(entries.get(0).jobId()).isEqualTo("job-1");
+        assertThat(entries.get(0).url()).isEqualTo("https://1.1.1.1/img.png");
+        assertThat(entries.get(0).attempts()).isEqualTo(3);
+        assertThat(entries.get(0).error()).isEqualTo("network error");
+    }
+
+    @Test
+    void listDlq_orderedByFailedAtDesc() {
+        jobStore.pushToDlq("job-a", "https://1.1.1.1/a.png", 3, "err");
+        jobStore.pushToDlq("job-b", "https://2.2.2.2/b.png", 3, "err");
+
+        var entries = jobStore.listDlq();
+        assertThat(entries).hasSizeGreaterThanOrEqualTo(2);
+        // most recent first
+        assertThat(entries.get(0).failedAt()).isGreaterThanOrEqualTo(entries.get(1).failedAt());
+    }
+
+    @Test
+    void requeueFromDlq_movesJobToQueueAndClearsEntry() {
+        jobStore.pushToDlq("job-1", "https://1.1.1.1/img.png", 3, "err");
+        jobStore.setStatus("job-1", JobStatus.FAILED);
+
+        boolean requeued = jobStore.requeueFromDlq("job-1");
+        assertThat(requeued).isTrue();
+        assertThat(jobStore.listDlq()).isEmpty();
+        assertThat(jobStore.getStatus("job-1")).isEqualTo(JobStatus.PENDING);
+
+        RedisJobStore.JobRequest req = jobStore.dequeue(Duration.ofMillis(500));
+        assertThat(req).isNotNull();
+        assertThat(req.jobId()).isEqualTo("job-1");
+        assertThat(req.attempt()).isEqualTo(1);
+    }
+
+    @Test
+    void requeueFromDlq_unknownJob_returnsFalse() {
+        assertThat(jobStore.requeueFromDlq("nonexistent")).isFalse();
+    }
+
+    @Test
+    void removeFromDlq_deletesEntry() {
+        jobStore.pushToDlq("job-1", "https://1.1.1.1/img.png", 3, "err");
+
+        boolean removed = jobStore.removeFromDlq("job-1");
+        assertThat(removed).isTrue();
+        assertThat(jobStore.listDlq()).isEmpty();
+    }
+
+    @Test
+    void removeFromDlq_unknownJob_returnsFalse() {
+        assertThat(jobStore.removeFromDlq("nonexistent")).isFalse();
     }
 }

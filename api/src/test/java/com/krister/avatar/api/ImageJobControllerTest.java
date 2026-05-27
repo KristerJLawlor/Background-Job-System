@@ -2,6 +2,7 @@ package com.krister.avatar.api;
 
 import com.krister.avatar.shared.JobStatus;
 import com.krister.avatar.shared.RedisJobStore;
+import com.krister.avatar.shared.S3ResultStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -39,9 +40,10 @@ class ImageJobControllerTest {
     @Autowired MockMvc mvc;
     @MockBean ImageJobService jobService;
     @MockBean IpRateLimiter rateLimiter;
-    // RedisJobStore is in the shared component scan but @WebMvcTest doesn't load Redis
-    // auto-configuration — mock it to prevent context startup failure.
+    // RedisJobStore and S3ResultStore are in the shared component scan path; mock both to
+    // prevent context startup failures (@PostConstruct on S3ResultStore calls S3).
     @MockBean RedisJobStore redisJobStore;
+    @MockBean S3ResultStore s3ResultStore;
 
     // --- Authentication ---
 

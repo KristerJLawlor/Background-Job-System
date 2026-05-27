@@ -88,6 +88,7 @@ public class JobProcessor {
                     log.warn("Job failed, scheduling retry nextAttempt={} delaySeconds={}", attempt + 1, delaySeconds, e);
                 } else {
                     jobStore.setStatus(jobId, JobStatus.FAILED);
+                    jobStore.pushToDlq(jobId, url, attempt, e.getMessage());
                     span.tag("job.outcome", "failed");
                     log.error("Job failed after max attempts attempt={}", attempt, e);
                 }
