@@ -2,10 +2,12 @@ package com.krister.avatar.api;
 
 import com.krister.avatar.shared.JobStatus;
 import com.krister.avatar.shared.RedisJobStore;
+import com.krister.avatar.shared.S3ResultStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -31,6 +33,9 @@ class RedisJobStoreIntegrationTest {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     }
+
+    // S3ResultStore.@PostConstruct would try to reach S3 — replace it with a mock.
+    @MockBean S3ResultStore s3ResultStore;
 
     @Autowired RedisJobStore jobStore;
     @Autowired StringRedisTemplate stringRedis;

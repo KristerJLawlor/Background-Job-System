@@ -2,6 +2,7 @@ package com.krister.avatar.api;
 
 import com.krister.avatar.shared.RedisJobStore;
 import com.krister.avatar.shared.RedisJobStore.DlqEntry;
+import com.krister.avatar.shared.S3ResultStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -21,6 +22,7 @@ class AdminControllerTest {
 
     @Autowired MockMvc mvc;
     @MockBean RedisJobStore jobStore;
+    @MockBean S3ResultStore s3ResultStore;
 
     @Test
     void listFailed_returnsEntries() throws Exception {
