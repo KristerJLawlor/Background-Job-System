@@ -13,7 +13,7 @@ services:
       # point at the jaeger service by name — overrides the localhost:4318 default
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318/v1/traces
       TRACING_SAMPLE_RATE: "1.0"
-      API_KEY: ${API_KEY:changeme}
+      API_KEY: ${API_KEY:-changeme}
       S3_BUCKET_NAME: avatar-results
       AWS_REGION: us-east-1
       S3_ENDPOINT_OVERRIDE: http://localstack:4566
@@ -46,7 +46,7 @@ services:
   # LocalStack emulates AWS S3 locally. The init script creates the avatar-results bucket
   # on startup. Use awslocal (bundled in the image) for manual inspection.
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.8
     ports:
       - "4566:4566"
     environment:

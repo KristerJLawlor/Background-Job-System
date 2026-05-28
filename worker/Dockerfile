@@ -11,6 +11,12 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
+# opencv_highgui (a transitive dep of opencv_objdetect/CascadeClassifier in the
+# bytedeco prebuilt JARs) links against GTK2 even in headless usage.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -ms /bin/bash appuser
 
 COPY --from=build /build/worker/build/libs/*.jar app.jar
