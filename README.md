@@ -9,8 +9,8 @@ An asynchronous image processing service. Submit an image URL via the REST API, 
 The only prerequisite is [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 ```bash
-git clone <repo-url>
-cd background-job-system
+git clone https://github.com/KristerJLawlor/Background-Job-System.git
+cd Background-Job-System
 docker compose up -d --build
 ```
 

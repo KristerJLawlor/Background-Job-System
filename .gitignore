@@ -3,6 +3,15 @@
 /Workers/
 urlFile.txt
 
+# Local environment — never commit secrets
+.env
+
+# Claude Code personal config and memory
+.claude/
+
+# Validation test output
+validation/output/
+
 # === Gradle ===             
 build/                      
 */build/                    
