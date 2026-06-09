@@ -127,12 +127,15 @@ public class AnimatedGifProcessor {
             ImageWriter writer = ImageIO.getImageWritersByFormatName("gif").next();
             writer.setOutput(ios);
 
-            IIOMetadata streamMeta = writer.getDefaultStreamMetadata(writer.getDefaultWriteParam());
-            setInfiniteLoop(streamMeta);
-            writer.prepareWriteSequence(streamMeta);
+            // GIFWritableStreamMetadata.mergeNativeTree only accepts Version,
+            // LogicalScreenDescriptor, and GlobalColorTable — ApplicationExtensions
+            // is not supported there. The Netscape loop extension must go in the
+            // first frame's image metadata instead.
+            writer.prepareWriteSequence(null);
 
-            for (GifFrame frame : frames) {
-                IIOMetadata frameMeta = buildFrameMetadata(writer, frame.delayCs());
+            for (int i = 0; i < frames.size(); i++) {
+                GifFrame frame = frames.get(i);
+                IIOMetadata frameMeta = buildFrameMetadata(writer, frame.delayCs(), i == 0);
                 writer.writeToSequence(
                         new IIOImage(frame.image(), null, frameMeta),
                         writer.getDefaultWriteParam());
@@ -144,22 +147,10 @@ public class AnimatedGifProcessor {
         return baos.toByteArray();
     }
 
-    private static void setInfiniteLoop(IIOMetadata streamMeta) throws IOException {
-        String format = streamMeta.getNativeMetadataFormatName();
-        IIOMetadataNode root = (IIOMetadataNode) streamMeta.getAsTree(format);
-
-        IIOMetadataNode appExtensions = findOrCreateNode(root, "ApplicationExtensions");
-        IIOMetadataNode appExt = new IIOMetadataNode("ApplicationExtension");
-        appExt.setAttribute("applicationID", "NETSCAPE");
-        appExt.setAttribute("authenticationCode", "2.0");
-        // Loop count 0 = infinite; stored as sub-block ID (1) + 2-byte little-endian count
-        appExt.setUserObject(new byte[]{0x1, 0x0, 0x0});
-        appExtensions.appendChild(appExt);
-
-        streamMeta.setFromTree(format, root);
-    }
-
-    private static IIOMetadata buildFrameMetadata(ImageWriter writer, int delayCs) throws IOException {
+    // GIFWritableImageMetadata.mergeNativeTree supports ApplicationExtensions, so the
+    // Netscape infinite-loop extension is embedded in the first frame's metadata.
+    private static IIOMetadata buildFrameMetadata(ImageWriter writer, int delayCs,
+                                                  boolean firstFrame) throws IOException {
         ImageTypeSpecifier type = ImageTypeSpecifier.createFromBufferedImageType(BufferedImage.TYPE_INT_ARGB);
         IIOMetadata meta = writer.getDefaultImageMetadata(type, writer.getDefaultWriteParam());
 
@@ -172,6 +163,16 @@ public class AnimatedGifProcessor {
         gce.setAttribute("transparentColorFlag", "FALSE");
         gce.setAttribute("delayTime", String.valueOf(delayCs));
         gce.setAttribute("transparentColorIndex", "0");
+
+        if (firstFrame) {
+            IIOMetadataNode appExtensions = findOrCreateNode(root, "ApplicationExtensions");
+            IIOMetadataNode appExt = new IIOMetadataNode("ApplicationExtension");
+            appExt.setAttribute("applicationID", "NETSCAPE");
+            appExt.setAttribute("authenticationCode", "2.0");
+            // Loop count 0 = infinite; sub-block ID (1) + 2-byte little-endian count
+            appExt.setUserObject(new byte[]{0x1, 0x0, 0x0});
+            appExtensions.appendChild(appExt);
+        }
 
         meta.setFromTree(format, root);
         return meta;
