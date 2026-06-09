@@ -1,7 +1,9 @@
 package com.krister.avatar.worker;
 
+import com.krister.avatar.core.AnimatedGifProcessor;
 import com.krister.avatar.core.DiscordImageResizer;
 import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.ProcessingResult;
 import com.krister.avatar.shared.RedisJobStore;
 import com.krister.avatar.shared.S3ResultStore;
 import io.micrometer.core.instrument.Gauge;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -64,11 +67,20 @@ public class JobProcessor {
                 jobStore.setStatus(jobId, JobStatus.PROCESSING);
                 log.info("Job processing started");
 
-                BufferedImage resized = DiscordImageResizer.downloadAndResize(url);
-
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                ImageIO.write(resized, "png", baos);
-                s3ResultStore.storeResult(jobId, baos.toByteArray());
+                byte[] rawBytes = DiscordImageResizer.downloadRaw(url);
+                ProcessingResult result;
+                if (AnimatedGifProcessor.isAnimatedGif(rawBytes)) {
+                    log.info("Detected animated GIF, processing all frames");
+                    result = new ProcessingResult(AnimatedGifProcessor.process(rawBytes), "image/gif");
+                } else {
+                    BufferedImage img = ImageIO.read(new ByteArrayInputStream(rawBytes));
+                    if (img == null) throw new java.io.IOException("URL did not return a recognized image");
+                    BufferedImage resized = DiscordImageResizer.resizeImage(img, 128, 128);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    ImageIO.write(resized, "png", baos);
+                    result = new ProcessingResult(baos.toByteArray(), "image/png");
+                }
+                s3ResultStore.storeResult(jobId, result);
                 jobStore.setStatus(jobId, JobStatus.COMPLETED);
 
                 log.info("Job completed");

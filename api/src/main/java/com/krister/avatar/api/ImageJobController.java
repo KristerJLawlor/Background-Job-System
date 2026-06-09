@@ -3,6 +3,7 @@ package com.krister.avatar.api;
 import java.util.Map;
 
 import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.ProcessingResult;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,16 +78,15 @@ public class ImageJobController {
             return ResponseEntity.badRequest().build();
         }
 
-        // claimResult atomically removes the PNG bytes from Redis, freeing memory immediately.
-        // Returns null if the result was already claimed or expired.
-        byte[] pngBytes = jobService.claimResult(jobId);
-        if (pngBytes == null) {
+        // claimResult atomically removes the result from S3. Returns null if already claimed or expired.
+        ProcessingResult result = jobService.claimResult(jobId);
+        if (result == null) {
             return ResponseEntity.status(HttpStatus.GONE).build();
         }
 
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_PNG)
-                .body(pngBytes);
+                .contentType(MediaType.parseMediaType(result.contentType()))
+                .body(result.data());
     }
 
 }

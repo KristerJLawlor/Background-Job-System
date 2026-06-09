@@ -1,6 +1,7 @@
 package com.krister.avatar.api;
 
 import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.ProcessingResult;
 import com.krister.avatar.shared.RedisJobStore;
 import com.krister.avatar.shared.S3ResultStore;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -146,11 +147,23 @@ class ImageJobControllerTest {
     void getResult_completed_returnsPngBytes() throws Exception {
         byte[] pngBytes = {(byte) 0x89, 0x50, 0x4E, 0x47}; // PNG magic bytes
         when(jobService.getStatus("job-1")).thenReturn(JobStatus.COMPLETED);
-        when(jobService.claimResult("job-1")).thenReturn(pngBytes);
+        when(jobService.claimResult("job-1")).thenReturn(new ProcessingResult(pngBytes, "image/png"));
 
         mvc.perform(get("/api/jobs/job-1/result").header("X-Api-Key", API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.IMAGE_PNG))
                 .andExpect(content().bytes(pngBytes));
+    }
+
+    @Test
+    void getResult_completedGif_returnsGifBytes() throws Exception {
+        byte[] gifBytes = {0x47, 0x49, 0x46, 0x38, 0x39, 0x61}; // GIF89a magic bytes
+        when(jobService.getStatus("job-1")).thenReturn(JobStatus.COMPLETED);
+        when(jobService.claimResult("job-1")).thenReturn(new ProcessingResult(gifBytes, "image/gif"));
+
+        mvc.perform(get("/api/jobs/job-1/result").header("X-Api-Key", API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.IMAGE_GIF))
+                .andExpect(content().bytes(gifBytes));
     }
 }

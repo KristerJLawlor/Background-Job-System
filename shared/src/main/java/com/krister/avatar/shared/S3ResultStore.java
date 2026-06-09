@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketLifecycleConfiguration;
@@ -12,6 +13,7 @@ import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.ExpirationStatus;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
 import software.amazon.awssdk.services.s3.model.LifecycleExpiration;
 import software.amazon.awssdk.services.s3.model.LifecycleRule;
@@ -65,26 +67,27 @@ public class S3ResultStore {
         log.info("S3 lifecycle configured bucket={} expiryDays={}", bucketName, resultExpiryDays);
     }
 
-    public void storeResult(String jobId, byte[] pngBytes) {
+    public void storeResult(String jobId, ProcessingResult result) {
         s3Client.putObject(
                 PutObjectRequest.builder()
                         .bucket(bucketName)
-                        .key("results/" + jobId + ".png")
-                        .contentType("image/png")
+                        .key("results/" + jobId)
+                        .contentType(result.contentType())
                         .build(),
-                RequestBody.fromBytes(pngBytes));
+                RequestBody.fromBytes(result.data()));
     }
 
     // Returns null if the result has already been claimed or doesn't exist.
-    public byte[] claimResult(String jobId) {
-        String key = "results/" + jobId + ".png";
+    public ProcessingResult claimResult(String jobId) {
+        String key = "results/" + jobId;
         try {
-            byte[] bytes = s3Client.getObjectAsBytes(
-                    GetObjectRequest.builder().bucket(bucketName).key(key).build()
-            ).asByteArray();
+            ResponseBytes<GetObjectResponse> response = s3Client.getObjectAsBytes(
+                    GetObjectRequest.builder().bucket(bucketName).key(key).build());
+            String contentType = response.response().contentType();
+            byte[] bytes = response.asByteArray();
             s3Client.deleteObject(
                     DeleteObjectRequest.builder().bucket(bucketName).key(key).build());
-            return bytes;
+            return new ProcessingResult(bytes, contentType != null ? contentType : "image/png");
         } catch (NoSuchKeyException e) {
             return null;
         }

@@ -1,7 +1,9 @@
 package com.krister.avatar.worker;
 
+import com.krister.avatar.core.AnimatedGifProcessor;
 import com.krister.avatar.core.DiscordImageResizer;
 import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.ProcessingResult;
 import com.krister.avatar.shared.RedisJobStore;
 import com.krister.avatar.shared.S3ResultStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -15,8 +17,10 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -45,14 +49,21 @@ class JobProcessorTest {
     void process_success_setsCompletedAndStoresResult() throws Exception {
         BufferedImage img = new BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB);
 
-        try (MockedStatic<DiscordImageResizer> mocked = mockStatic(DiscordImageResizer.class)) {
-            mocked.when(() -> DiscordImageResizer.downloadAndResize(anyString())).thenReturn(img);
+        try (MockedStatic<DiscordImageResizer> mockResizer = mockStatic(DiscordImageResizer.class);
+             MockedStatic<AnimatedGifProcessor> mockGif = mockStatic(AnimatedGifProcessor.class);
+             MockedStatic<ImageIO> mockImageIO = mockStatic(ImageIO.class)) {
+
+            mockResizer.when(() -> DiscordImageResizer.downloadRaw(anyString())).thenReturn(new byte[0]);
+            mockGif.when(() -> AnimatedGifProcessor.isAnimatedGif(any())).thenReturn(false);
+            mockImageIO.when(() -> ImageIO.read(any(InputStream.class))).thenReturn(img);
+            mockResizer.when(() -> DiscordImageResizer.resizeImage(any(), eq(128), eq(128))).thenReturn(img);
+            // ImageIO.write is also mocked (no-op); baos stays empty, which is fine for this test
 
             processor.process("job-1", "https://1.1.1.1/img.png", 1);
         }
 
         verify(jobStore).setStatus("job-1", JobStatus.PROCESSING);
-        verify(s3ResultStore).storeResult(eq("job-1"), any(byte[].class));
+        verify(s3ResultStore).storeResult(eq("job-1"), any(ProcessingResult.class));
         verify(jobStore).setStatus("job-1", JobStatus.COMPLETED);
         verify(jobStore, never()).scheduleRetry(any(), any(), anyInt(), anyLong());
     }
@@ -60,7 +71,7 @@ class JobProcessorTest {
     @Test
     void process_failureWithAttemptsRemaining_schedulesRetry() {
         try (MockedStatic<DiscordImageResizer> mocked = mockStatic(DiscordImageResizer.class)) {
-            mocked.when(() -> DiscordImageResizer.downloadAndResize(anyString()))
+            mocked.when(() -> DiscordImageResizer.downloadRaw(anyString()))
                     .thenThrow(new IOException("network error"));
 
             processor.process("job-1", "https://1.1.1.1/img.png", 1);
@@ -75,7 +86,7 @@ class JobProcessorTest {
     @Test
     void process_failureOnSecondAttempt_doublesBackoffDelay() {
         try (MockedStatic<DiscordImageResizer> mocked = mockStatic(DiscordImageResizer.class)) {
-            mocked.when(() -> DiscordImageResizer.downloadAndResize(anyString()))
+            mocked.when(() -> DiscordImageResizer.downloadRaw(anyString()))
                     .thenThrow(new IOException("network error"));
 
             processor.process("job-1", "https://1.1.1.1/img.png", 2);
@@ -88,7 +99,7 @@ class JobProcessorTest {
     @Test
     void process_failureOnFinalAttempt_setsFailedAndPushesToDlq() {
         try (MockedStatic<DiscordImageResizer> mocked = mockStatic(DiscordImageResizer.class)) {
-            mocked.when(() -> DiscordImageResizer.downloadAndResize(anyString()))
+            mocked.when(() -> DiscordImageResizer.downloadRaw(anyString()))
                     .thenThrow(new IOException("network error"));
 
             processor.process("job-1", "https://1.1.1.1/img.png", 3);

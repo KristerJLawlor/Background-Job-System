@@ -1,6 +1,7 @@
 package com.krister.avatar.api;
 
 import com.krister.avatar.shared.JobStatus;
+import com.krister.avatar.shared.ProcessingResult;
 import com.krister.avatar.shared.RedisJobStore;
 import com.krister.avatar.shared.S3ResultStore;
 import org.slf4j.Logger;
@@ -34,7 +35,7 @@ public class ImageJobService {
         return jobStore.getStatus(jobId);
     }
 
-    public byte[] claimResult(String jobId) {
+    public ProcessingResult claimResult(String jobId) {
         return s3ResultStore.claimResult(jobId);
     }
 }

@@ -9,6 +9,7 @@ import org.bytedeco.opencv.opencv_core.RectVector;
 import org.bytedeco.opencv.opencv_core.Size;
 import org.bytedeco.opencv.opencv_objdetect.CascadeClassifier;
 
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -49,12 +50,21 @@ public class SmartCropper {
      * Falls back to a center crop if no face is found.
      */
     public static BufferedImage smartCrop(BufferedImage img) {
+        Rectangle rect = detectCropRect(img);
+        return img.getSubimage(rect.x, rect.y, rect.width, rect.height);
+    }
+
+    /**
+     * Returns the crop rectangle without applying it. Used by animated GIF processing
+     * to determine a single crop region from the first frame and apply it to all frames.
+     */
+    public static Rectangle detectCropRect(BufferedImage img) {
         try (Java2DFrameConverter j2d = new Java2DFrameConverter();
              OpenCVFrameConverter.ToMat toMat = new OpenCVFrameConverter.ToMat()) {
 
             Frame frame = j2d.convert(img);
             Mat mat = toMat.convert(frame);
-            if (mat == null || mat.empty()) return DiscordImageResizer.centerCrop(img);
+            if (mat == null || mat.empty()) return centerCropRect(img);
 
             Mat gray = new Mat();
             // BufferedImage can be 3-channel (BGR) or 4-channel (BGRA) after conversion
@@ -68,10 +78,17 @@ public class SmartCropper {
             DETECTOR.get().detectMultiScale(gray, faces, 1.1, 3, 0,
                     new Size(minDim, minDim), new Size());
 
-            if (faces.empty()) return DiscordImageResizer.centerCrop(img);
+            if (faces.empty()) return centerCropRect(img);
 
-            return cropAroundFace(img, largestFace(faces));
+            return faceCropRect(img, largestFace(faces));
         }
+    }
+
+    private static Rectangle centerCropRect(BufferedImage img) {
+        int size = Math.min(img.getWidth(), img.getHeight());
+        int x = (img.getWidth() - size) / 2;
+        int y = (img.getHeight() - size) / 2;
+        return new Rectangle(x, y, size, size);
     }
 
     private static Rect largestFace(RectVector faces) {
@@ -83,7 +100,7 @@ public class SmartCropper {
         return best;
     }
 
-    private static BufferedImage cropAroundFace(BufferedImage img, Rect face) {
+    private static Rectangle faceCropRect(BufferedImage img, Rect face) {
         // Pad generously around the face so the avatar includes head and shoulders
         int padding = (int) (face.width() * 0.6);
         // Clamp crop size to the smallest image dimension
@@ -96,6 +113,6 @@ public class SmartCropper {
         int x = Math.max(0, Math.min(cx - size / 2, img.getWidth() - size));
         int y = Math.max(0, Math.min(cy - size / 2, img.getHeight() - size));
 
-        return img.getSubimage(x, y, size, size);
+        return new Rectangle(x, y, size, size);
     }
 }

@@ -3,8 +3,10 @@ package com.krister.avatar.core;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -26,88 +28,72 @@ public class DiscordImageResizer {
         return resizeImage(originalImage, DISCORD_IMAGE_DIMENSION, DISCORD_IMAGE_DIMENSION);
     }
 
-    public static BufferedImage downloadImage(String imageUrl) throws IOException {
-
+    // Downloads raw bytes without decoding. Used by the worker to detect animated GIFs
+    // before deciding which processing path to take.
+    public static byte[] downloadRaw(String imageUrl) throws IOException {
         try {
-            URI uri = new URI(imageUrl.trim()); //Trim whitespace from URL
-            URL url = uri.toURL();  //Convert URI to URL
-
-            //Open a connection to the URL
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();    //Make configurable HTTP connection object
-            connection.setRequestMethod("GET"); 
+            URI uri = new URI(imageUrl.trim());
+            URL url = uri.toURL();
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
             connection.setRequestProperty("User-Agent", "Mozilla/5.0");
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(5000);
 
-            int responseCode = connection.getResponseCode();    //send the request and get response code
+            int responseCode = connection.getResponseCode();
             if (responseCode != 200) {
                 throw new IOException("HTTP error code: " + responseCode);
             }
 
-            //Download the image from given URL without resizing
-            //We use bufferedimage so we can manipulate the image before returning it
-            BufferedImage image = ImageIO.read(connection.getInputStream());
-
-            if (image == null) {
-                throw new IOException("URL did not return an image");
+            try (InputStream in = connection.getInputStream()) {
+                return in.readAllBytes();
             }
+        } catch (URISyntaxException e) {
+            throw new IOException("Invalid image URL: " + imageUrl, e);
+        }
+    }
 
-            return image;
-
-        }   catch (URISyntaxException e) {
-                throw new IOException("Invalid image URL: " + imageUrl, e);
-            }
+    public static BufferedImage downloadImage(String imageUrl) throws IOException {
+        byte[] raw = downloadRaw(imageUrl);
+        BufferedImage image = ImageIO.read(new ByteArrayInputStream(raw));
+        if (image == null) {
+            throw new IOException("URL did not return an image");
+        }
+        return image;
     }
 
 
     public static BufferedImage resizeImage(
-        BufferedImage originalImage, int targetWidth, int targetHeight) {
-
-        // Smart crop: detect faces and crop around the subject; falls back to center crop
+            BufferedImage originalImage, int targetWidth, int targetHeight) {
         BufferedImage croppedImage = SmartCropper.smartCrop(originalImage);
+        return resizeOnly(croppedImage, targetWidth, targetHeight);
+    }
 
-        //Perform a multi-step downscaling to maintain quality (reduce aliasing) as we reach our target size
-        int w = croppedImage.getWidth();
-        int h = croppedImage.getHeight();
-        BufferedImage img = croppedImage;
+    // Resizes an already-cropped image without applying smart crop again.
+    // Used by animated GIF processing to resize individual frames after a shared crop.
+    public static BufferedImage resizeOnly(BufferedImage img, int targetWidth, int targetHeight) {
+        int w = img.getWidth();
+        int h = img.getHeight();
 
-        //Reduce size by half until we are at or just below target size
         while (w / 2 >= targetWidth && h / 2 >= targetHeight) {
             w /= 2;
             h /= 2;
-
             BufferedImage tmp = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-
             Graphics2D g = tmp.createGraphics();
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(img, 0, 0, w, h, null);
             g.dispose();
-
             img = tmp;
-    }
+        }
 
-    //Final resize to target dimensions using high-quality bicubic interpolation
-    BufferedImage finalImage = 
-        new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB); //Use ARGB to support transparency
-
-    Graphics2D g2d = finalImage.createGraphics();
-
-    g2d.setRenderingHint(
-        RenderingHints.KEY_INTERPOLATION, 
-        RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-
-    g2d.setRenderingHint(
-        RenderingHints.KEY_RENDERING, 
-        RenderingHints.VALUE_RENDER_QUALITY);
-
-    g2d.setRenderingHint(
-        RenderingHints.KEY_ANTIALIASING, 
-        RenderingHints.VALUE_ANTIALIAS_ON);
-
-    g2d.drawImage(img, 0, 0, targetWidth, targetHeight, null);
-    g2d.dispose();
-
-    return finalImage;
+        BufferedImage finalImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2d = finalImage.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2d.drawImage(img, 0, 0, targetWidth, targetHeight, null);
+        g2d.dispose();
+        return finalImage;
     }
 
     public static BufferedImage centerCrop(BufferedImage img) {
