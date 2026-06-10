@@ -1,5 +1,6 @@
 package com.krister.avatar.api;
 
+import java.io.IOException;
 import java.util.Map;
 
 import com.krister.avatar.shared.JobStatus;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/jobs")
@@ -55,6 +57,31 @@ public class ImageJobController {
         } catch (IllegalArgumentException e) {
             meterRegistry.counter("jobs.rejected", "reason", "invalid_url").increment();
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Submit job from uploaded file
+    @PostMapping("/upload")
+    public ResponseEntity<?> uploadJob(@RequestParam("file") MultipartFile file,
+                                       HttpServletRequest request) {
+        if (!rateLimiter.tryConsume(request)) {
+            meterRegistry.counter("jobs.rejected", "reason", "rate_limited").increment();
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("error", "Rate limit exceeded — try again later"));
+        }
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "File must not be empty"));
+        }
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "File must be an image"));
+        }
+        try {
+            String jobId = jobService.createJobFromUpload(file.getBytes(), contentType);
+            meterRegistry.counter("jobs.submitted").increment();
+            return ResponseEntity.ok(Map.of("jobId", jobId));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to read uploaded file"));
         }
     }
 

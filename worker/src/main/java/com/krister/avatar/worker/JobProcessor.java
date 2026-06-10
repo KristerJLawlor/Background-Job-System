@@ -67,7 +67,12 @@ public class JobProcessor {
                 jobStore.setStatus(jobId, JobStatus.PROCESSING);
                 log.info("Job processing started");
 
-                byte[] rawBytes = DiscordImageResizer.downloadRaw(url);
+                // Uploads arrive via s3://uploads/{jobId}; regular jobs are HTTP/HTTPS URLs.
+                boolean isUpload = url.startsWith("s3://uploads/");
+                byte[] rawBytes = isUpload
+                        ? s3ResultStore.downloadUpload(url.substring("s3://uploads/".length()))
+                        : DiscordImageResizer.downloadRaw(url);
+
                 ProcessingResult result;
                 if (AnimatedGifProcessor.isAnimatedGif(rawBytes)) {
                     log.info("Detected animated GIF, processing all frames");
@@ -81,6 +86,12 @@ public class JobProcessor {
                     result = new ProcessingResult(baos.toByteArray(), "image/png");
                 }
                 s3ResultStore.storeResult(jobId, result);
+
+                // Delete upload only after result is safely stored so retries can re-read the source.
+                if (isUpload) {
+                    s3ResultStore.deleteUpload(url.substring("s3://uploads/".length()));
+                }
+
                 jobStore.setStatus(jobId, JobStatus.COMPLETED);
 
                 log.info("Job completed");

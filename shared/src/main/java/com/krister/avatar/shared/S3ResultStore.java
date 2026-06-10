@@ -52,16 +52,19 @@ public class S3ResultStore {
                 PutBucketLifecycleConfigurationRequest.builder()
                         .bucket(bucketName)
                         .lifecycleConfiguration(BucketLifecycleConfiguration.builder()
-                                .rules(LifecycleRule.builder()
-                                        .id("expire-unclaimed-results")
-                                        .status(ExpirationStatus.ENABLED)
-                                        .filter(LifecycleRuleFilter.builder()
-                                                .prefix("results/")
+                                .rules(
+                                        LifecycleRule.builder()
+                                                .id("expire-unclaimed-results")
+                                                .status(ExpirationStatus.ENABLED)
+                                                .filter(LifecycleRuleFilter.builder().prefix("results/").build())
+                                                .expiration(LifecycleExpiration.builder().days(resultExpiryDays).build())
+                                                .build(),
+                                        LifecycleRule.builder()
+                                                .id("expire-stale-uploads")
+                                                .status(ExpirationStatus.ENABLED)
+                                                .filter(LifecycleRuleFilter.builder().prefix("uploads/").build())
+                                                .expiration(LifecycleExpiration.builder().days(1).build())
                                                 .build())
-                                        .expiration(LifecycleExpiration.builder()
-                                                .days(resultExpiryDays)
-                                                .build())
-                                        .build())
                                 .build())
                         .build());
         log.info("S3 lifecycle configured bucket={} expiryDays={}", bucketName, resultExpiryDays);
@@ -75,6 +78,27 @@ public class S3ResultStore {
                         .contentType(result.contentType())
                         .build(),
                 RequestBody.fromBytes(result.data()));
+    }
+
+    public void storeUpload(String jobId, byte[] data, String contentType) {
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key("uploads/" + jobId)
+                        .contentType(contentType)
+                        .build(),
+                RequestBody.fromBytes(data));
+    }
+
+    public byte[] downloadUpload(String jobId) {
+        return s3Client.getObjectAsBytes(
+                GetObjectRequest.builder().bucket(bucketName).key("uploads/" + jobId).build()
+        ).asByteArray();
+    }
+
+    public void deleteUpload(String jobId) {
+        s3Client.deleteObject(
+                DeleteObjectRequest.builder().bucket(bucketName).key("uploads/" + jobId).build());
     }
 
     // Returns null if the result has already been claimed or doesn't exist.

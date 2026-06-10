@@ -4,6 +4,7 @@
 build
 **/build
 node_modules
+frontend/node_modules
 *.log
 *.class
 *.tmp

@@ -53,3 +53,9 @@ tmp/
 
 # Temporary / compiled binaries
 *.bin
+
+# === Frontend ===
+frontend/node_modules/
+frontend/dist/
+# Built frontend injected into Spring Boot static resources — generated, not committed
+api/src/main/resources/static/

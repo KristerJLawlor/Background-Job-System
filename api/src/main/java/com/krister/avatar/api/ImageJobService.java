@@ -31,6 +31,15 @@ public class ImageJobService {
         return jobId;
     }
 
+    public String createJobFromUpload(byte[] data, String contentType) {
+        String jobId = UUID.randomUUID().toString();
+        s3ResultStore.storeUpload(jobId, data, contentType);
+        jobStore.setStatus(jobId, JobStatus.PENDING);
+        jobStore.enqueue(jobId, "s3://uploads/" + jobId);
+        log.info("Upload job created jobId={}", jobId);
+        return jobId;
+    }
+
     public JobStatus getStatus(String jobId) {
         return jobStore.getStatus(jobId);
     }
