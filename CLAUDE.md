@@ -34,6 +34,12 @@ docker compose build worker --no-cache
 
 # End-to-end smart crop validation (requires stack running)
 bash scripts/validate-smart-crop.sh
+
+# Frontend — dev server (proxies /api to localhost:8080)
+cd frontend && npm install && npm run dev
+
+# Frontend — production build (outputs to frontend/dist/)
+cd frontend && npm run build
 ```
 
 ## Architecture
@@ -43,25 +49,36 @@ Five Gradle modules with distinct responsibilities:
 | Module | Type | Role |
 |--------|------|------|
 | `shared` | `java-library` | `RedisJobStore`, `S3ResultStore`, `AwsConfig`, `JobStatus` — shared by both Spring Boot apps |
-| `core` | `java-library` | `DiscordImageResizer` (download + resize), `SmartCropper` (OpenCV face detection) |
-| `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting |
+| `core` | `java-library` | `DiscordImageResizer` (download + resize), `SmartCropper` (OpenCV face detection), `AnimatedGifProcessor` (frame-by-frame GIF resize) |
+| `api` | Spring Boot (8080) | Job submission (URL + file upload), status/result endpoints, auth, rate limiting, serves GUI static files |
 | `worker` | Spring Boot (8081) | Dequeues jobs from Redis and processes them |
 | `cli` | Java application | Legacy batch CLI, standalone |
 
 **Job flow**
 
 ```
-POST /api/jobs?url=...  (X-Api-Key required)
+POST /api/jobs?url=...          (URL submission)
+POST /api/jobs/upload           (multipart file upload)
+  → file upload: S3ResultStore.storeUpload(jobId, bytes, contentType) → uploads/{jobId}
   → ImageJobService: setStatus(PENDING) + LPUSH jobs:queue
+    → URL jobs:   payload url = "https://..."
+    → file jobs:  payload url = "s3://uploads/{jobId}"
+
   → worker BRPOP (JobWorkerPool threads, default 2)
   → JobProcessor: setStatus(PROCESSING)
-  → DiscordImageResizer.downloadAndResize() → SmartCropper.smartCrop() inside
-  → S3ResultStore.storeResult(jobId, png)
+  → url starts with "s3://uploads/"? → S3ResultStore.downloadUpload(jobId)
+  → else → DiscordImageResizer.downloadRaw(url)
+  → AnimatedGifProcessor.isAnimatedGif(bytes)?
+      yes → AnimatedGifProcessor.process(bytes) → result contentType = "image/gif"
+      no  → ImageIO.read → DiscordImageResizer.resizeImage (SmartCropper.smartCrop inside) → ImageIO.write PNG → result contentType = "image/png"
+  → S3ResultStore.storeResult(jobId, ProcessingResult) → results/{jobId}
+  → if upload: S3ResultStore.deleteUpload(jobId)   ← only after result is stored
   → setStatus(COMPLETED)
 
 On failure (attempt < maxAttempts=3):
   → ZADD jobs:retry (score = now + exponential backoff)
   → RetryPromoter @Scheduled every 5s moves due entries back to jobs:queue
+  → upload bytes remain in S3 for retry to re-read
 
 On final failure:
   → setStatus(FAILED) + pushToDlq(jobId, url, attempts, error)
@@ -84,9 +101,21 @@ Admin: GET/POST/DELETE /api/admin/jobs/failed  (AdminController)
 
 **S3 / LocalStack**
 
-`S3ResultStore` stores results at `results/{jobId}.png` and has a `@PostConstruct` that creates the bucket if missing and sets a lifecycle expiry policy. This `@PostConstruct` fires in every Spring test context — any test that loads the full application context must `@MockBean S3ResultStore s3ResultStore`.
+`S3ResultStore` uses two key prefixes:
+- `results/{jobId}` — processed output; content type stored in S3 metadata (no file extension). Lifecycle: expires after `job.result.s3-expiry-days` (default 1 day).
+- `uploads/{jobId}` — raw uploaded bytes awaiting worker processing. Lifecycle: expires after 1 day. Workers delete the upload after successfully storing the result; retries re-download it.
+
+`S3ResultStore.@PostConstruct` creates the bucket if missing and sets both lifecycle rules. This fires in every Spring test context — any test that loads the full application context must `@MockBean S3ResultStore s3ResultStore`.
 
 `AwsConfig` uses `pathStyleAccessEnabled(true)` for LocalStack compatibility. LocalStack is pinned to `3.8` in docker-compose.yml — newer versions require a paid license.
+
+**Frontend**
+
+React + Vite app in `frontend/`. Built output (`frontend/dist/`) is injected into `api/src/main/resources/static/` during the Docker build (Node 20 stage in `Dockerfile`), so the GUI is served directly from the Spring Boot jar at `/`.
+
+For local development, run the Vite dev server (`npm run dev` in `frontend/`) which proxies `/api` to `localhost:8080`. The `api/src/main/resources/static/` directory is gitignored — it is generated at build time only.
+
+The GUI polls `GET /api/jobs/{jobId}` every 2 seconds. On `COMPLETED`, it calls `GET /api/jobs/{jobId}/result` to claim and download the result. The API key is stored in browser `localStorage` (default `changeme`).
 
 ## Critical Dependency Notes
 
@@ -102,6 +131,8 @@ Gradle does not pull classifier-specific JARs transitively. Omitting `openblas` 
 **GTK2 in worker Dockerfile** — `libjniopencv_highgui.so` links against GTK2 even in headless usage. The runtime stage of `worker/Dockerfile` installs `libgtk2.0-0`. Do not remove it.
 
 **AWS SDK scope in `shared/build.gradle`** — `software.amazon.awssdk:s3` is `implementation` (not `api`), so its types are not on consumers' compile classpath. Tests for `S3ResultStore` must live in `shared/src/test/`, not in `api/src/test/`.
+
+**JDK 21 GIF writer limitation** — `GIFWritableStreamMetadata.mergeNativeTree` only accepts `Version`, `LogicalScreenDescriptor`, and `GlobalColorTable`. The Netscape infinite-loop `ApplicationExtension` must go in the **first frame's image metadata** (`GIFWritableImageMetadata`), not the stream metadata. `AnimatedGifProcessor.buildFrameMetadata` handles this; do not move the `ApplicationExtensions` node to stream metadata.
 
 ## Testing Patterns
 
@@ -123,5 +154,5 @@ All variables have working defaults for local dev. Key ones for production:
 | `S3_ENDPOINT_OVERRIDE` | _(empty)_ | Set to `http://localstack:4566` for local |
 | `JOB_RETRY_MAX_ATTEMPTS` | `3` | |
 | `JOB_RETRY_BASE_DELAY_SECONDS` | `10` | Doubles per attempt (10s, 20s, 40s) |
-| `JOB_RESULT_EXPIRY_DAYS` | `1` | S3 lifecycle policy |
+| `JOB_RESULT_EXPIRY_DAYS` | `1` | S3 lifecycle policy for results and uploads |
 | `TRACING_SAMPLE_RATE` | `1.0` | Lower in high-traffic prod |

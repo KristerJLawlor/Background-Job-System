@@ -1,6 +1,6 @@
 # Background Job System
 
-An asynchronous image processing service. Submit an image URL via the REST API, receive a job ID immediately, and poll for the result when processing is complete. Images are resized to 128×128 PNG with OpenCV face detection for smart cropping (falls back to center crop).
+An asynchronous image processing service. Submit an image via the browser GUI or REST API, and receive a smart-cropped, resized 128×128 result. Static images output as PNG; animated GIFs are processed frame-by-frame and returned as animated GIFs.
 
 ---
 
@@ -14,28 +14,18 @@ cd Background-Job-System
 docker compose up -d --build
 ```
 
-Wait ~30 seconds for services to start, then submit a job:
+Wait ~30 seconds for services to start, then open **http://localhost:8080** in your browser.
 
-```bash
-curl -X POST "http://localhost:8080/api/jobs?url=https://picsum.photos/300" \
-     -H "X-Api-Key: changeme"
-```
+---
 
-```json
-{ "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2" }
-```
+## GUI
 
-Poll until `COMPLETED`, then download the result:
+The web interface is served from the API container at **http://localhost:8080**.
 
-```bash
-curl "http://localhost:8080/api/jobs/ee0d7b58-363e-4017-a48c-960bc09967f2" \
-     -H "X-Api-Key: changeme"
-# → COMPLETED
-
-curl "http://localhost:8080/api/jobs/ee0d7b58-363e-4017-a48c-960bc09967f2/result" \
-     -H "X-Api-Key: changeme" \
-     -o avatar.png
-```
+- **Upload Files tab** — drag-and-drop or click to browse; select multiple images at once (.png, .jpg, .gif, up to 10 MB each)
+- **Enter URLs tab** — paste one URL per line; all are submitted as a batch
+- Each submitted item appears as a job card showing real-time status; a **Download** button appears automatically when processing completes
+- Click ⚙ to set your API key (stored in browser localStorage; default is `changeme`)
 
 ---
 
@@ -43,7 +33,7 @@ curl "http://localhost:8080/api/jobs/ee0d7b58-363e-4017-a48c-960bc09967f2/result
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| API | http://localhost:8080 | Job submission and status |
+| API + GUI | http://localhost:8080 | Job submission, status, result download, and web interface |
 | Grafana | http://localhost:3000 | Metrics dashboards (admin / admin) |
 | Jaeger | http://localhost:16686 | Distributed trace viewer |
 | Prometheus | http://localhost:9090 | Raw metrics scrape |
@@ -59,18 +49,21 @@ Five Gradle modules:
 | Module | Type | Role |
 |--------|------|------|
 | `shared` | Library | `RedisJobStore`, `S3ResultStore`, `JobStatus` — used by both Spring Boot apps |
-| `core` | Library | Image download, resize, and OpenCV smart crop |
-| `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting |
+| `core` | Library | Image download, resize, OpenCV smart crop, animated GIF processing |
+| `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting, serves GUI |
 | `worker` | Spring Boot (8081) | Dequeues jobs from Redis and processes them |
 | `cli` | Java app | Legacy standalone CLI |
 
 **Job flow**
 
 ```
-POST /api/jobs?url=...  (X-Api-Key required)
+POST /api/jobs?url=...          (URL submission)
+POST /api/jobs/upload           (file upload → stored at uploads/{jobId} in S3)
   → enqueue to Redis (jobs:queue)
   → worker BRPOP
-  → download image → smart crop (OpenCV face detection) → resize to 128×128
+  → download bytes (HTTP or S3 for uploads)
+  → animated GIF? → process all frames, return GIF
+  → static image?  → smart crop (OpenCV face detection) → resize to 128×128, return PNG
   → store result in S3 (LocalStack locally)
   → status → COMPLETED
 
@@ -87,7 +80,7 @@ On final failure:
 
 All endpoints require the `X-Api-Key` header. The default key for local development is `changeme`.
 
-### Submit a job
+### Submit a job from a URL
 
 ```
 POST /api/jobs?url={imageUrl}
@@ -102,7 +95,26 @@ curl -X POST "http://localhost:8080/api/jobs?url=https://picsum.photos/300" \
 { "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2" }
 ```
 
-Returns `429 Too Many Requests` if the per-IP rate limit is exceeded (10 requests/minute by default).
+Returns `400` if the URL is invalid or points to a private/reserved IP address. Returns `429` if the per-IP rate limit is exceeded (10 requests/minute by default).
+
+### Submit a job from a file upload
+
+```
+POST /api/jobs/upload
+Content-Type: multipart/form-data
+```
+
+```bash
+curl -X POST "http://localhost:8080/api/jobs/upload" \
+     -H "X-Api-Key: changeme" \
+     -F "file=@avatar.png"
+```
+
+```json
+{ "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2" }
+```
+
+Maximum file size: 10 MB. File must have an `image/*` content type.
 
 ### Check status
 
@@ -129,7 +141,7 @@ curl "http://localhost:8080/api/jobs/ee0d7b58-363e-4017-a48c-960bc09967f2/result
      -o avatar.png
 ```
 
-Returns PNG bytes. Returns `400` if the job is not yet complete. Returns `410 Gone` if the result was already claimed or has expired (default TTL: 1 day).
+Returns the processed image bytes. Content type is `image/png` for static images and `image/gif` for animated GIFs. Returns `400` if the job is not yet complete. Returns `410 Gone` if the result was already downloaded or has expired (default TTL: 1 day). Results are one-shot — downloading consumes the result.
 
 ### Health
 
@@ -204,10 +216,10 @@ docker compose down -v
 
 ## Running without Docker
 
-Requires Java 21, Gradle, and a Redis instance on `localhost:6379`.
+Requires Java 21, Node.js 20, Gradle, and a Redis instance on `localhost:6379`.
 
 ```bash
-# Build all modules
+# Build all Java modules
 ./gradlew build
 
 # Start the API (http://localhost:8080)
@@ -216,11 +228,11 @@ Requires Java 21, Gradle, and a Redis instance on `localhost:6379`.
 # Start the worker (separate terminal)
 ./gradlew :worker:bootRun
 
-# Human-readable logs
-./gradlew :api:bootRun --args='--spring.profiles.active=dev'
+# Run the frontend dev server (http://localhost:5173, proxies /api to port 8080)
+cd frontend && npm install && npm run dev
 ```
 
-Without LocalStack, S3 storage is unavailable. To test without S3, you would need to swap `S3ResultStore` for a local implementation — not supported out of the box.
+The frontend dev server proxies all `/api` requests to the Spring Boot API, so you can develop the UI without rebuilding the Java jar. Without LocalStack, S3 storage is unavailable.
 
 ---
 
