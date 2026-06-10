@@ -2,6 +2,8 @@
 
 An asynchronous image processing service. Submit an image via the browser GUI or REST API, and receive a smart-cropped, resized 128×128 result. Static images output as PNG; animated GIFs are processed frame-by-frame and returned as animated GIFs.
 
+**Tested:** a 400×400 rotating Earth GIF (44 frames, 1 MB) → 128×128 animated GIF (242 KB) with all frames and timing preserved.
+
 ---
 
 ## Quickstart
@@ -115,6 +117,20 @@ curl -X POST "http://localhost:8080/api/jobs/upload" \
 ```
 
 Maximum file size: 10 MB. File must have an `image/*` content type.
+
+Animated GIFs are detected automatically. All frames are cropped and resized to 128×128, and the result is returned as an animated GIF with the original frame timing intact:
+
+```bash
+curl -X POST "http://localhost:8080/api/jobs/upload" \
+     -H "X-Api-Key: changeme" \
+     -F "file=@rotating_earth.gif"
+# → {"jobId":"16dcdb2b-8cf5-4641-a146-a81b7d5f520b"}
+
+curl "http://localhost:8080/api/jobs/16dcdb2b-8cf5-4641-a146-a81b7d5f520b/result" \
+     -H "X-Api-Key: changeme" \
+     -o avatar.gif
+# Content-Type: image/gif — 128×128 animated GIF, all frames preserved
+```
 
 ### Check status
 
