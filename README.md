@@ -51,7 +51,7 @@ Five Gradle modules:
 | Module | Type | Role |
 |--------|------|------|
 | `shared` | Library | `RedisJobStore`, `S3ResultStore`, `JobStatus` — used by both Spring Boot apps |
-| `core` | Library | Image download, resize, OpenCV smart crop, animated GIF processing |
+| `core` | Library | Image download, resize, OpenCV DNN face detection + smart crop, animated GIF processing |
 | `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting, serves GUI |
 | `worker` | Spring Boot (8081) | Dequeues jobs from Redis and processes them |
 | `cli` | Java app | Legacy standalone CLI |
@@ -65,7 +65,7 @@ POST /api/jobs/upload           (file upload → stored at uploads/{jobId} in S3
   → worker BRPOP
   → download bytes (HTTP or S3 for uploads)
   → animated GIF? → process all frames, return GIF
-  → static image?  → smart crop (OpenCV face detection) → resize to 128×128, return PNG
+  → static image?  → smart crop (OpenCV DNN SSD ResNet face detection, falls back to center crop) → resize to 128×128, return PNG
   → store result in S3 (LocalStack locally)
   → status → COMPLETED
 

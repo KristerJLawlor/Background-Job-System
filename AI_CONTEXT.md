@@ -29,11 +29,10 @@ Responsibilities:
 Contains the core business logic.
 
 Responsibilities:
-- Background job queue
-- Worker thread pool
 - Image downloading
-- Image resizing
-- Job status management
+- Image resizing (multi-step, bicubic)
+- Smart cropping: OpenCV DNN SSD ResNet face detection; falls back to center crop
+- Animated GIF processing (frame-by-frame crop + resize)
 
 ## cli
 Original command-line testing interface.
@@ -47,14 +46,16 @@ Responsibilities:
 
 # Current Features
 
-- Asynchronous background job processing
-- REST API for job submission and tracking
-- Parallel image processing using Java thread pools
-- Multi-step high-quality image resizing
-- Center-cropping for square Discord-style avatars
-- Dockerized Spring Boot API
-- Gradle multi-module architecture
-- Health checks using Spring Boot Actuator
+- Asynchronous background job processing via Redis queue
+- REST API for job submission, status polling, and result download
+- File upload (multipart) and URL submission
+- OpenCV DNN SSD ResNet face detection with smart crop; center-crop fallback
+- Animated GIF support: frame-by-frame crop + resize, timing preserved
+- Exponential backoff retries (3 attempts) + dead letter queue
+- S3 result storage (LocalStack locally, real S3 in prod)
+- Prometheus metrics, Grafana dashboards, OTLP/Jaeger distributed tracing
+- React + Vite frontend served from the API jar
+- Docker Compose full stack (api, worker, redis, localstack, prometheus, grafana, jaeger)
 
 ---
 
@@ -160,81 +161,19 @@ Future improvements should add intelligent cropping support.
 
 ---
 
-# Planned Smart Cropping Features
+# Smart Cropping (Implemented)
 
-## Automatic Subject Detection
+`SmartCropper` in the `core` module uses the OpenCV DNN module with the
+`res10_300x300_ssd_iter_140000` Caffe SSD ResNet model (bundled in the JAR under
+`core/src/main/resources/dnn/`). It handles frontal, angled, and partially-obscured
+faces that the older Haar cascade missed. Confidence threshold is 0.1 to accommodate
+lower scores from distant or non-frontal subjects. Falls back to a center crop when
+no face is detected above the threshold.
 
-Planned functionality:
-- detect faces or primary subjects automatically
-- crop around the detected subject
-- preserve avatar framing quality
+## Possible future improvements
 
-Preferred implementation:
-- OpenCV Java bindings
-- lightweight face detection initially
-- architecture should support future saliency/object detection
-
----
-
-## Manual Crop Override
-
-Future frontend/API support should allow users to:
-- manually define crop regions
-- override automatic crop behavior
-- preview crop window before processing
-
-Expected future API format:
-
-```json
-{
-  "imageUrl": "...",
-  "cropMode": "AUTO"
-}
-```
-
-or
-
-```json
-{
-  "imageUrl": "...",
-  "cropMode": "MANUAL",
-  "crop": {
-    "x": 100,
-    "y": 50,
-    "width": 300,
-    "height": 300
-  }
-}
-```
-
----
-
-# Desired Future Pipeline
-
-Upload
- ->
-Smart Crop Detection
- ->
-Optional Manual Crop Override
- ->
-Resize Pipeline
- ->
-Storage
-
----
-
-# Important Constraints
-
-Smart cropping should:
-- integrate into the existing processing pipeline
-- preserve current asynchronous job architecture
-- remain modular inside the core module
-- avoid overengineering initially
-
-Preferred approach:
-1. face detection first
-2. later generalized subject detection
-3. later optional frontend crop UI
+- Manual crop override (API + frontend UI)
+- Per-user API keys and job ownership
 
 # Additional Architectural Notes
 

@@ -49,7 +49,7 @@ Five Gradle modules with distinct responsibilities:
 | Module | Type | Role |
 |--------|------|------|
 | `shared` | `java-library` | `RedisJobStore`, `S3ResultStore`, `AwsConfig`, `JobStatus` — shared by both Spring Boot apps |
-| `core` | `java-library` | `DiscordImageResizer` (download + resize), `SmartCropper` (OpenCV face detection), `AnimatedGifProcessor` (frame-by-frame GIF resize) |
+| `core` | `java-library` | `DiscordImageResizer` (download + resize), `SmartCropper` (OpenCV DNN SSD ResNet face detection, falls back to center crop), `AnimatedGifProcessor` (frame-by-frame GIF resize) |
 | `api` | Spring Boot (8080) | Job submission (URL + file upload), status/result endpoints, auth, rate limiting, serves GUI static files |
 | `worker` | Spring Boot (8081) | Dequeues jobs from Redis and processes them |
 | `cli` | Java application | Legacy batch CLI, standalone |
