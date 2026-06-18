@@ -10,7 +10,9 @@ import org.bytedeco.opencv.opencv_dnn.Net;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
@@ -88,11 +90,19 @@ public class SmartCropper {
     // to determine a single crop region from the first frame and apply it to all frames,
     // so the subject doesn't drift between frames after cropping.
     public static Rectangle detectCropRect(BufferedImage img) {
+        // Pre-downsample large images before passing to OpenCV. The DNN resizes its input
+        // to 300×300 internally anyway, so detection accuracy is unaffected. Running the
+        // Mat conversion on a 600px image instead of a 3000px one significantly reduces
+        // memory allocation and CPU time for the conversion and blobFromImage steps.
+        // The DNN output coordinates are normalized (0–1), so we still pass the original
+        // image dimensions to findBestDetection — the result is in original pixel space.
+        BufferedImage forDetection = downsampleForDetection(img);
+
         try (Java2DFrameConverter j2d = new Java2DFrameConverter();
              OpenCVFrameConverter.ToMat toMat = new OpenCVFrameConverter.ToMat()) {
 
             // Convert Java's BufferedImage → JavaCV Frame → OpenCV Mat (the native image format).
-            Frame frame = j2d.convert(img);
+            Frame frame = j2d.convert(forDetection);
             Mat mat = toMat.convert(frame);
             if (mat == null || mat.empty()) return centerCropRect(img);
 
@@ -152,6 +162,27 @@ public class SmartCropper {
 
         log.debug("DNN face detection: candidates={} detected={}", n, best != null);
         return best;
+    }
+
+    // Caps the image at 600px on the longest side before DNN processing.
+    // 600px gives the DNN plenty of detail to detect faces — going larger just wastes CPU.
+    private static final int MAX_DETECTION_DIM = 600;
+
+    private static BufferedImage downsampleForDetection(BufferedImage img) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        if (w <= MAX_DETECTION_DIM && h <= MAX_DETECTION_DIM) return img;
+
+        float scale = (float) MAX_DETECTION_DIM / Math.max(w, h);
+        int newW = Math.round(w * scale);
+        int newH = Math.round(h * scale);
+
+        BufferedImage small = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = small.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(img, 0, 0, newW, newH, null);
+        g.dispose();
+        return small;
     }
 
     private static Rectangle centerCropRect(BufferedImage img) {
