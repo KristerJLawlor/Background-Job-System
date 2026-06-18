@@ -22,6 +22,11 @@ dependencies {
     runtimeOnly 'org.bytedeco:openblas:0.3.28-1.5.11:linux-x86_64'
     runtimeOnly 'org.bytedeco:openblas:0.3.28-1.5.11:windows-x86_64'
 
+    // TwelveMonkeys ImageIO plugins extend Java's built-in ImageIO via ServiceLoader.
+    // imageio-webp adds WebP read support; imageio-core and imageio-metadata are pulled
+    // in transitively. No code changes needed — ImageIO.read() just starts working with WebP.
+    implementation 'com.twelvemonkeys.imageio:imageio-webp:3.11.0'
+
     compileOnly 'org.slf4j:slf4j-api:2.0.11'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.1'
