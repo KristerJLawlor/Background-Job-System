@@ -39,6 +39,8 @@ public class JobProcessor {
     @Value("${job.retry.base-delay-seconds:10}")
     private long baseDelaySeconds;
 
+    // AtomicInteger is a thread-safe integer — increment/decrement are guaranteed to be
+    // seen correctly by all threads without synchronization blocks.
     private final AtomicInteger activeJobs = new AtomicInteger(0);
 
     public JobProcessor(RedisJobStore jobStore, S3ResultStore s3ResultStore,
@@ -47,17 +49,27 @@ public class JobProcessor {
         this.s3ResultStore = s3ResultStore;
         this.meterRegistry = meterRegistry;
         this.tracer = tracer;
+        // Gauge is a metric that reflects a current value (like a fuel gauge), as opposed
+        // to a Counter (ever-increasing) or Timer (duration histogram). This makes the
+        // "currently active jobs" number visible in Grafana in real time.
         Gauge.builder("jobs.active", activeJobs, AtomicInteger::get)
                 .description("Jobs currently being processed by the worker pool")
                 .register(meterRegistry);
     }
 
     public void process(String jobId, String url, int attempt) {
+        // MDC (Mapped Diagnostic Context) attaches key-value pairs to the current thread's
+        // log context. Every log.info/warn/error call below will automatically include
+        // jobId and attempt in the log output, making it easy to trace a job across log lines.
         MDC.put("jobId", jobId);
         MDC.put("attempt", String.valueOf(attempt));
+        // Timer.Sample captures the start timestamp; .stop() records the elapsed duration.
         Timer.Sample sample = Timer.start(meterRegistry);
         activeJobs.incrementAndGet();
 
+        // Distributed tracing: a Span represents a unit of work. This span covers the entire
+        // job processing step. In Jaeger, it appears as a child of the /api/jobs HTTP span
+        // that submitted the job, showing the full request → queue → process timeline.
         Span span = tracer.nextSpan().name("job.process").start();
         try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
             span.tag("job.id", jobId);
@@ -78,6 +90,7 @@ public class JobProcessor {
                     log.info("Detected animated GIF, processing all frames");
                     result = new ProcessingResult(AnimatedGifProcessor.process(rawBytes), "image/gif");
                 } else {
+                    // ImageIO.read decodes the raw bytes into a BufferedImage (in-memory pixel grid).
                     BufferedImage img = ImageIO.read(new ByteArrayInputStream(rawBytes));
                     if (img == null) throw new java.io.IOException("URL did not return a recognized image");
                     BufferedImage resized = DiscordImageResizer.resizeImage(img, 128, 128);
@@ -102,7 +115,11 @@ public class JobProcessor {
                 span.error(e);
 
                 if (attempt < maxAttempts) {
-                    // Exponential backoff: 10s, 20s, 40s for attempts 1, 2, 3 (with defaults)
+                    // Exponential backoff: delay doubles with each attempt to avoid hammering
+                    // a temporarily unavailable resource. Formula: baseDelay * 2^(attempt-1)
+                    // With defaults (base=10s): attempt 1→10s, attempt 2→20s, attempt 3→40s.
+                    // "1L << (attempt - 1)" is a left bit-shift — equivalent to 2^(attempt-1)
+                    // but avoids floating-point conversion.
                     long delaySeconds = baseDelaySeconds * (1L << (attempt - 1));
                     jobStore.scheduleRetry(jobId, url, attempt + 1, delaySeconds);
                     jobStore.setStatus(jobId, JobStatus.PENDING);
@@ -121,6 +138,7 @@ public class JobProcessor {
         } finally {
             span.end();
             activeJobs.decrementAndGet();
+            // Clear MDC so the next job processed by this thread starts with a clean context.
             MDC.clear();
         }
     }

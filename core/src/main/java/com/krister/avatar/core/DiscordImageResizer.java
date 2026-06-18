@@ -16,11 +16,9 @@ import javax.imageio.ImageIO;
 
 public class DiscordImageResizer {
 
-    
-    //Private constructor to prevent instantiation
     private DiscordImageResizer() {}
-    
-    //Target width and height for Discord avatars are 128x128 pixels
+
+    // Target width and height for Discord avatars are 128×128 pixels.
     private static final int DISCORD_IMAGE_DIMENSION = 128;
 
     public static BufferedImage downloadAndResize(String imageUrl) throws IOException {
@@ -28,14 +26,16 @@ public class DiscordImageResizer {
         return resizeImage(originalImage, DISCORD_IMAGE_DIMENSION, DISCORD_IMAGE_DIMENSION);
     }
 
-    // Downloads raw bytes without decoding. Used by the worker to detect animated GIFs
-    // before deciding which processing path to take.
+    // Downloads raw bytes without decoding them into a BufferedImage. Keeping bytes raw
+    // lets the worker inspect the magic header to detect animated GIFs before committing
+    // to a processing path (animated vs static).
     public static byte[] downloadRaw(String imageUrl) throws IOException {
         try {
             URI uri = new URI(imageUrl.trim());
             URL url = uri.toURL();
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
+            // Some CDNs reject requests without a User-Agent header.
             connection.setRequestProperty("User-Agent", "Mozilla/5.0");
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(5000);
@@ -62,7 +62,9 @@ public class DiscordImageResizer {
         return image;
     }
 
-
+    // Smart-crops then resizes. The crop happens first so the resize only works on the
+    // region of interest — if we resized first, the face would be too small for the
+    // DNN to detect reliably.
     public static BufferedImage resizeImage(
             BufferedImage originalImage, int targetWidth, int targetHeight) {
         BufferedImage croppedImage = SmartCropper.smartCrop(originalImage);
@@ -75,17 +77,24 @@ public class DiscordImageResizer {
         int w = img.getWidth();
         int h = img.getHeight();
 
+        // Step-down scaling: halve dimensions repeatedly until we're close to the target.
+        // Scaling directly from 1000px → 128px in one step loses significant detail.
+        // Halving each step (bilinear) keeps more information and the final bicubic pass
+        // sharpens the result. This is a classic "mipmap-style" quality trick.
         while (w / 2 >= targetWidth && h / 2 >= targetHeight) {
             w /= 2;
             h /= 2;
             BufferedImage tmp = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = tmp.createGraphics();
+            // Bilinear interpolation: fast, acceptable quality for intermediate steps.
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(img, 0, 0, w, h, null);
             g.dispose();
             img = tmp;
         }
 
+        // Final step: bicubic interpolation produces smoother results for the last
+        // resize, at the cost of being slower than bilinear.
         BufferedImage finalImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2d = finalImage.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
@@ -97,16 +106,14 @@ public class DiscordImageResizer {
     }
 
     public static BufferedImage centerCrop(BufferedImage img) {
-        //Determine the smallest x or y dimension. This will be the max size of the square crop's sides
+        // Take the largest square that fits within the image, centered.
         int size = Math.min(img.getWidth(), img.getHeight());
-
         int x = (img.getWidth() - size) / 2;
         int y = (img.getHeight() - size) / 2;
-
         return img.getSubimage(x, y, size, size);
     }
 
-    //Helper method to save to disk (wont be used in the main code but useful for testing)
+    // Helper to save a BufferedImage to disk as PNG — useful for local testing and validation.
     public static void saveImage(BufferedImage img, File outputFile) throws IOException {
         ImageIO.write(img, "png", outputFile);
     }

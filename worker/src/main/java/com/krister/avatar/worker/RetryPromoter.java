@@ -7,6 +7,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+// Polls the Redis retry sorted set every 5 seconds and moves any jobs whose delay
+// has elapsed back into the main work queue. This decouples retry scheduling from
+// job processing — the worker threads don't need to know anything about retries.
+//
+// An alternative would be Spring's @Scheduled annotation, but a plain thread is simpler
+// here since we need manual lifecycle control (stop() on shutdown) anyway.
 @Component
 public class RetryPromoter {
 
@@ -36,6 +42,7 @@ public class RetryPromoter {
                 if (promoted > 0) log.info("Promoted retry jobs count={}", promoted);
                 Thread.sleep(POLL_INTERVAL_MS);
             } catch (InterruptedException e) {
+                // Re-interrupt the thread so callers higher up the stack can also observe it.
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {

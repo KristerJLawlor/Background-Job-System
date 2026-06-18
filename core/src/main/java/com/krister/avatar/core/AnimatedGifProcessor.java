@@ -20,12 +20,24 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+// Handles animated GIF processing: reads all frames, crops them consistently,
+// resizes each to 128×128, and re-encodes them as an animated GIF.
+//
+// GIF internals crash course:
+// - An animated GIF is a sequence of frames, each with a delay time (in centiseconds).
+// - Frames can be partial patches over a "canvas", not necessarily full images.
+// - Each frame has a "disposal method" that tells the renderer what to do with the canvas
+//   before drawing the next frame (keep it, clear it, etc.).
+// - The Netscape Application Extension is a non-standard block that most browsers
+//   recognize as an instruction to loop the animation (loop count 0 = infinite).
 public class AnimatedGifProcessor {
 
     private AnimatedGifProcessor() {}
 
     private static final int TARGET_SIZE = 128;
 
+    // GIF files start with a 6-byte magic header: "GIF87a" or "GIF89a".
+    // Checking the header is faster than decoding the entire file just to count frames.
     public static boolean isAnimatedGif(byte[] data) throws IOException {
         if (data.length < 6) return false;
         String magic = new String(data, 0, 6);
@@ -63,6 +75,10 @@ public class AnimatedGifProcessor {
         return writeAnimatedGif(processed);
     }
 
+    // Reads each raw GIF frame and composites it onto a shared canvas, producing the
+    // "full" image a viewer would see at each point in the animation. Without this step,
+    // raw frames can be partial updates (e.g. only the region that changed), which would
+    // crop incorrectly if treated as standalone images.
     private static List<GifFrame> readCompositedFrames(byte[] data) throws IOException {
         try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
             ImageReader reader = ImageIO.getImageReadersByFormatName("gif").next();
@@ -78,6 +94,8 @@ public class AnimatedGifProcessor {
             List<GifFrame> frames = new ArrayList<>(numFrames);
 
             for (int i = 0; i < numFrames; i++) {
+                // IIOMetadata carries per-frame GIF metadata as an XML-like tree.
+                // We need: delay time (how long to show this frame) and disposal method.
                 IIOMetadataNode root = (IIOMetadataNode) reader.getImageMetadata(i)
                         .getAsTree("javax_imageio_gif_image_1.0");
 
@@ -92,6 +110,7 @@ public class AnimatedGifProcessor {
                     if (dm != null && !dm.isEmpty()) disposal = dm;
                 }
 
+                // Frames can be positioned at an offset within the canvas (partial updates).
                 IIOMetadataNode desc = findNode(root, "ImageDescriptor");
                 if (desc != null) {
                     frameX = parseAttr(desc, "imageLeftPosition");
@@ -100,15 +119,17 @@ public class AnimatedGifProcessor {
 
                 BufferedImage rawFrame = reader.read(i);
 
-                // Composite this frame onto the canvas
+                // Composite this frame onto the canvas at its declared position.
                 Graphics2D gc = canvas.createGraphics();
                 gc.drawImage(rawFrame, frameX, frameY, null);
                 gc.dispose();
 
-                // Snapshot the composited state as the output frame for this index
+                // Snapshot the composited state — this is what the output frame should look like.
                 frames.add(new GifFrame(deepCopy(canvas), Math.max(delayCs, 2)));
 
-                // Prepare the canvas for the next frame according to the disposal method.
+                // Apply the disposal method to prepare the canvas for the next frame.
+                // "restoreToBackgroundColor" clears the region this frame occupied.
+                // "doNotDispose" (most common) leaves the canvas as-is.
                 // "restoreToPrevious" is rare and complex; treating it as doNotDispose is a
                 // safe approximation that avoids ghosting in the common case.
                 if ("restoreToBackgroundColor".equals(disposal)) {
@@ -127,6 +148,8 @@ public class AnimatedGifProcessor {
             ImageWriter writer = ImageIO.getImageWritersByFormatName("gif").next();
             writer.setOutput(ios);
 
+            // prepareWriteSequence/writeToSequence/endWriteSequence is the ImageIO API for
+            // writing a multi-frame (animated) file rather than a single static image.
             // GIFWritableStreamMetadata.mergeNativeTree only accepts Version,
             // LogicalScreenDescriptor, and GlobalColorTable — ApplicationExtensions
             // is not supported there. The Netscape loop extension must go in the
@@ -147,6 +170,8 @@ public class AnimatedGifProcessor {
         return baos.toByteArray();
     }
 
+    // Builds per-frame metadata including delay time and (for the first frame) the
+    // Netscape Application Extension that tells browsers to loop the GIF infinitely.
     // GIFWritableImageMetadata.mergeNativeTree supports ApplicationExtensions, so the
     // Netscape infinite-loop extension is embedded in the first frame's metadata.
     private static IIOMetadata buildFrameMetadata(ImageWriter writer, int delayCs,
@@ -161,15 +186,18 @@ public class AnimatedGifProcessor {
         gce.setAttribute("disposalMethod", "doNotDispose");
         gce.setAttribute("userInputFlag", "FALSE");
         gce.setAttribute("transparentColorFlag", "FALSE");
+        // delayTime is in centiseconds (1/100 of a second): e.g. 10 = 100ms per frame.
         gce.setAttribute("delayTime", String.valueOf(delayCs));
         gce.setAttribute("transparentColorIndex", "0");
 
         if (firstFrame) {
+            // The Netscape 2.0 extension is a de-facto standard (not part of the GIF spec)
+            // that all major browsers honour to loop animated GIFs.
             IIOMetadataNode appExtensions = findOrCreateNode(root, "ApplicationExtensions");
             IIOMetadataNode appExt = new IIOMetadataNode("ApplicationExtension");
             appExt.setAttribute("applicationID", "NETSCAPE");
             appExt.setAttribute("authenticationCode", "2.0");
-            // Loop count 0 = infinite; sub-block ID (1) + 2-byte little-endian count
+            // Sub-block: ID byte (0x01) + 2-byte little-endian loop count (0x00 0x00 = infinite)
             appExt.setUserObject(new byte[]{0x1, 0x0, 0x0});
             appExtensions.appendChild(appExt);
         }
@@ -178,6 +206,8 @@ public class AnimatedGifProcessor {
         return meta;
     }
 
+    // AlphaComposite.CLEAR fills the region with fully transparent pixels, effectively
+    // erasing it. This is used to implement the "restoreToBackgroundColor" disposal method.
     private static void clearRect(BufferedImage img, int x, int y, int w, int h) {
         Graphics2D g = img.createGraphics();
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.CLEAR));
@@ -185,6 +215,9 @@ public class AnimatedGifProcessor {
         g.dispose();
     }
 
+    // Returns an independent copy of the image. Without this, all "snapshots" in the frames
+    // list would share the same underlying pixel array — mutating the canvas for the next
+    // frame would retroactively change every previous frame we already stored.
     private static BufferedImage deepCopy(BufferedImage src) {
         BufferedImage copy = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = copy.createGraphics();

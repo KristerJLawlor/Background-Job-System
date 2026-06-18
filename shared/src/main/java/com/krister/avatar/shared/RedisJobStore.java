@@ -13,6 +13,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+// Owns all Redis interactions for the job pipeline. Uses four different Redis data structures,
+// each chosen for its access pattern:
+//
+//   jobs:queue       → List   (LPUSH/BRPOP — FIFO work queue)
+//   job:{id}:status  → String (simple key-value with TTL auto-expiry)
+//   jobs:retry       → Sorted Set (score = fire-at epoch second, enables time-ordered scheduling)
+//   jobs:dlq         → Hash   (jobId field → JSON value, easy keyed lookup)
+//
+// Java objects are serialized to JSON strings because Redis only stores strings natively.
 @Component
 public class RedisJobStore {
 
@@ -22,6 +31,7 @@ public class RedisJobStore {
     private static final String DLQ_KEY = "jobs:dlq";
 
     private final StringRedisTemplate stringRedis;
+    // ObjectMapper (Jackson) converts Java objects to/from JSON strings for storage in Redis.
     private final ObjectMapper objectMapper;
 
     @Value("${job.result.ttl-minutes:60}")
@@ -32,6 +42,9 @@ public class RedisJobStore {
         this.objectMapper = objectMapper;
     }
 
+    // Stores a plain string with a TTL. Redis automatically deletes the key when the TTL
+    // expires — no cron job or cleanup code needed. Clients polling for status will receive
+    // null (→ 404) once the TTL elapses.
     public void setStatus(String jobId, JobStatus status) {
         stringRedis.opsForValue().set(
                 STATUS_KEY.formatted(jobId), status.name(), Duration.ofMinutes(ttlMinutes));
@@ -42,6 +55,9 @@ public class RedisJobStore {
         return val == null ? null : JobStatus.valueOf(val);
     }
 
+    // LPUSH pushes to the left (head) of the list; BRPOP pops from the right (tail).
+    // This left-push / right-pop pattern makes the List behave as a FIFO queue so jobs
+    // are processed in the order they were submitted.
     public void enqueue(String jobId, String url) {
         try {
             String payload = objectMapper.writeValueAsString(new JobRequest(jobId, url, 1));
@@ -52,7 +68,9 @@ public class RedisJobStore {
     }
 
     // Schedules a retry by adding the job to the sorted set with score = fire-at epoch second.
-    // The RetryPromoter thread moves it back to jobs:queue once the delay has elapsed.
+    // Redis Sorted Sets keep members ordered by score — querying "score <= now" efficiently
+    // finds every job whose delay has elapsed without scanning the full set.
+    // The RetryPromoter thread moves due entries back to jobs:queue every 5 seconds.
     public void scheduleRetry(String jobId, String url, int attempt, long delaySeconds) {
         try {
             String payload = objectMapper.writeValueAsString(new JobRequest(jobId, url, attempt));
@@ -76,7 +94,10 @@ public class RedisJobStore {
         return due.size();
     }
 
-    // Blocking pop with timeout — returns null if no job arrives within the timeout window.
+    // BRPOP (blocking right-pop) makes the worker thread sleep inside Redis until a job
+    // arrives, rather than busy-polling in a tight loop. The timeout parameter caps how
+    // long the thread blocks — after which it returns null so the caller can check
+    // whether it should shut down gracefully.
     public JobRequest dequeue(Duration timeout) {
         String payload = stringRedis.opsForList().rightPop(QUEUE_KEY, timeout);
         if (payload == null) return null;
@@ -87,6 +108,9 @@ public class RedisJobStore {
         }
     }
 
+    // Dead Letter Queue: jobs that have exhausted all retry attempts land here.
+    // A Hash (field → value map) is used so the admin API can look up or delete a
+    // specific job by ID in O(1) without scanning every failed entry.
     public void pushToDlq(String jobId, String url, int attempts, String error) {
         try {
             DlqEntry entry = new DlqEntry(jobId, url, attempts, Instant.now().getEpochSecond(), error);
@@ -110,6 +134,7 @@ public class RedisJobStore {
                 .toList();
     }
 
+    // Requeuing resets the attempt counter to 1 so the job gets a fresh set of retries.
     public boolean requeueFromDlq(String jobId) {
         String raw = (String) stringRedis.opsForHash().get(DLQ_KEY, jobId);
         if (raw == null) return false;
@@ -130,6 +155,9 @@ public class RedisJobStore {
         return deleted != null && deleted > 0;
     }
 
+    // Java records are immutable data carriers — the compiler auto-generates the constructor,
+    // getters (jobId(), url(), etc.), equals, hashCode, and toString. Jackson serializes them
+    // to/from JSON without any extra annotations.
     public record JobRequest(String jobId, String url, int attempt) {}
 
     public record DlqEntry(String jobId, String url, int attempts, long failedAt, String error) {}

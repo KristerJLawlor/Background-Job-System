@@ -7,6 +7,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+// Admin endpoints for managing the Dead Letter Queue (DLQ) — jobs that failed all retry
+// attempts. These endpoints are protected by the same API key as the main job API.
 @RestController
 @RequestMapping("/api/admin/jobs/failed")
 public class AdminController {
@@ -22,6 +24,8 @@ public class AdminController {
         return jobStore.listDlq();
     }
 
+    // 204 No Content is the standard success response for operations that don't return a body.
+    // 404 communicates the job wasn't in the DLQ (already requeued or never existed).
     @PostMapping("/{jobId}/requeue")
     public ResponseEntity<Void> requeue(@PathVariable String jobId) {
         boolean found = jobStore.requeueFromDlq(jobId);

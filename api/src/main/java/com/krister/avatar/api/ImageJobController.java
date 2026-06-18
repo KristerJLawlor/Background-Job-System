@@ -21,6 +21,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+// @RestController = @Controller + @ResponseBody. It tells Spring that every method's
+// return value is written directly to the HTTP response body (as JSON by default),
+// rather than being treated as a view name to render.
+// @RequestMapping sets the base URL prefix for all endpoints in this class.
 @RestController
 @RequestMapping("/api/jobs")
 public class ImageJobController {
@@ -30,6 +34,8 @@ public class ImageJobController {
     private final ImageJobService jobService;
     private final IpRateLimiter rateLimiter;
     private final GlobalJobQuota globalQuota;
+    // MeterRegistry (Micrometer) is the abstraction for publishing metrics. Spring Boot
+    // auto-configures it to export to Prometheus, which Grafana then reads.
     private final MeterRegistry meterRegistry;
 
     public ImageJobController(ImageJobService jobService, IpRateLimiter rateLimiter,
@@ -40,13 +46,15 @@ public class ImageJobController {
         this.meterRegistry = meterRegistry;
     }
 
-    // Submit job
+    // ResponseEntity<?> — the wildcard lets this method return either a Map (for error JSON)
+    // or a Map<String,String> (for the success jobId). Spring serializes both to JSON.
     @PostMapping
     public ResponseEntity<?> submitJob(@RequestParam String url, HttpServletRequest request) {
         // Rate limit checked first — before URL validation — so throttled requests never
         // trigger DNS resolution or any downstream work.
         if (!rateLimiter.tryConsume(request)) {
-            // "reason" tag lets dashboards break rejections down by cause without separate metrics
+            // The "reason" tag lets dashboards break the jobs.rejected counter down by cause
+            // (rate_limited vs invalid_url vs quota_exceeded) without needing three separate metrics.
             meterRegistry.counter("jobs.rejected", "reason", "rate_limited").increment();
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("error", "Rate limit exceeded — try again later"));
@@ -67,7 +75,8 @@ public class ImageJobController {
         }
     }
 
-    // Submit job from uploaded file
+    // MultipartFile is Spring's abstraction over a file sent via a multipart/form-data POST.
+    // It gives access to the filename, content type, and raw bytes without manual HTTP parsing.
     @PostMapping("/upload")
     public ResponseEntity<?> uploadJob(@RequestParam("file") MultipartFile file,
                                        HttpServletRequest request) {
@@ -97,7 +106,7 @@ public class ImageJobController {
         }
     }
 
-    // Check status
+    // @PathVariable binds the {jobId} segment of the URL path to the method parameter.
     @GetMapping("/{jobId}")
     public ResponseEntity<String> getStatus(@PathVariable String jobId) {
         JobStatus status = jobService.getStatus(jobId);
@@ -110,16 +119,17 @@ public class ImageJobController {
         return ResponseEntity.ok(status.toString());
     }
 
-    // Get result
     @GetMapping("/{jobId}/result")
     public ResponseEntity<byte[]> getResult(@PathVariable String jobId) {
         if (jobService.getStatus(jobId) != JobStatus.COMPLETED) {
             return ResponseEntity.badRequest().build();
         }
 
-        // claimResult atomically removes the result from S3. Returns null if already claimed or expired.
+        // claimResult reads the result from S3 then deletes it — one-shot download.
+        // Returns null if already claimed or if S3 lifecycle policy already expired it.
         ProcessingResult result = jobService.claimResult(jobId);
         if (result == null) {
+            // 410 Gone is more informative than 404: the resource existed but is no longer available.
             return ResponseEntity.status(HttpStatus.GONE).build();
         }
 

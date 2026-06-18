@@ -10,6 +10,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
+// @Service is semantically equivalent to @Component — both register the class as a
+// Spring-managed singleton. @Service signals intent: this class contains business logic
+// rather than infrastructure (web layer or data access).
 @Service
 public class ImageJobService {
 
@@ -24,6 +27,9 @@ public class ImageJobService {
     }
 
     public String createJob(String url) {
+        // UUID (Universally Unique Identifier) generates a random 128-bit ID that is
+        // practically guaranteed to be unique globally — no database sequence or coordination
+        // between servers needed. Format: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".
         String jobId = UUID.randomUUID().toString();
         jobStore.setStatus(jobId, JobStatus.PENDING);
         jobStore.enqueue(jobId, url);
@@ -33,8 +39,12 @@ public class ImageJobService {
 
     public String createJobFromUpload(byte[] data, String contentType) {
         String jobId = UUID.randomUUID().toString();
+        // Upload bytes are stored in S3 first, before touching the queue, so the worker
+        // never dequeues a job whose source data hasn't been written yet.
         s3ResultStore.storeUpload(jobId, data, contentType);
         jobStore.setStatus(jobId, JobStatus.PENDING);
+        // The "s3://uploads/" scheme is an internal convention — not a real S3 URL —
+        // that tells the worker to fetch bytes from S3 rather than from an HTTP URL.
         jobStore.enqueue(jobId, "s3://uploads/" + jobId);
         log.info("Upload job created jobId={}", jobId);
         return jobId;

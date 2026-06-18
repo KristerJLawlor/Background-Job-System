@@ -25,6 +25,14 @@ import static org.bytedeco.opencv.global.opencv_dnn.readNetFromCaffe;
 import static org.bytedeco.opencv.global.opencv_imgproc.COLOR_BGRA2BGR;
 import static org.bytedeco.opencv.global.opencv_imgproc.cvtColor;
 
+// Uses an OpenCV DNN (Deep Neural Network) face detector to find the most prominent face
+// in an image and crop around it, producing a better avatar than a simple center crop.
+//
+// The model is "SSD ResNet-10" trained on faces:
+//   SSD = Single Shot MultiBox Detector — detects objects in one forward pass (fast).
+//   ResNet = Residual Network — a CNN architecture that uses skip connections to allow
+//            very deep networks to train without vanishing gradients.
+//   The model was trained in the Caffe framework; it lives in core/src/main/resources/dnn/.
 public class SmartCropper {
 
     private SmartCropper() {}
@@ -33,15 +41,22 @@ public class SmartCropper {
     // Low threshold accommodates partially-angled or distant faces; the model is still
     // localising correctly at confidences well below the 0.5 typical for frontal shots.
     private static final float CONFIDENCE_THRESHOLD = 0.1f;
-    // Mean BGR values used when the SSD ResNet face detector was trained
+    // The model was trained with images pre-processed by subtracting these BGR mean values
+    // from every pixel. We must apply the same normalization at inference time or the
+    // model's predictions will be wrong (it was trained expecting zero-mean input).
     private static final Scalar MEAN = new Scalar(104.0, 177.0, 123.0, 0.0);
 
-    // Net is not thread-safe — each worker thread gets its own instance.
+    // OpenCV's Net class is NOT thread-safe — two threads calling net.forward() simultaneously
+    // would corrupt internal state. ThreadLocal gives each thread its own Net instance,
+    // so the worker pool's multiple threads can all run inference concurrently.
     private static final ThreadLocal<Net> DETECTOR =
             ThreadLocal.withInitial(SmartCropper::createNet);
 
     private static Net createNet() {
         try {
+            // The model files are bundled in the JAR as classpath resources. OpenCV's
+            // readNetFromCaffe requires file paths, not streams, so we extract them
+            // to temp files on disk. deleteOnExit() cleans them up when the JVM shuts down.
             File prototxt = extractResource("/dnn/deploy.prototxt", "deploy", ".prototxt");
             File model = extractResource("/dnn/res10_300x300_ssd_iter_140000.caffemodel", "res10", ".caffemodel");
             Net net = readNetFromCaffe(prototxt.getAbsolutePath(), model.getAbsolutePath());
@@ -62,27 +77,27 @@ public class SmartCropper {
         }
     }
 
-    /**
-     * Crops the image around the largest detected face with padding.
-     * Falls back to a center crop if no face is found.
-     */
+    // Crops the image around the largest detected face with padding.
+    // Falls back to a center crop if no face is found.
     public static BufferedImage smartCrop(BufferedImage img) {
         Rectangle rect = detectCropRect(img);
         return img.getSubimage(rect.x, rect.y, rect.width, rect.height);
     }
 
-    /**
-     * Returns the crop rectangle without applying it. Used by animated GIF processing
-     * to determine a single crop region from the first frame and apply it to all frames.
-     */
+    // Returns the crop rectangle without applying it. Used by animated GIF processing
+    // to determine a single crop region from the first frame and apply it to all frames,
+    // so the subject doesn't drift between frames after cropping.
     public static Rectangle detectCropRect(BufferedImage img) {
         try (Java2DFrameConverter j2d = new Java2DFrameConverter();
              OpenCVFrameConverter.ToMat toMat = new OpenCVFrameConverter.ToMat()) {
 
+            // Convert Java's BufferedImage → JavaCV Frame → OpenCV Mat (the native image format).
             Frame frame = j2d.convert(img);
             Mat mat = toMat.convert(frame);
             if (mat == null || mat.empty()) return centerCropRect(img);
 
+            // The model expects 3-channel BGR input. BGRA (4-channel, has alpha) images
+            // must be converted first.
             Mat bgr = new Mat();
             if (mat.channels() == 4) {
                 cvtColor(mat, bgr, COLOR_BGRA2BGR);
@@ -90,10 +105,15 @@ public class SmartCropper {
                 bgr = mat;
             }
 
+            // blobFromImage resizes the image to 300×300 and subtracts the mean — the
+            // exact preprocessing the model expects. The output "blob" is a 4D tensor
+            // in the shape [batch, channels, height, width].
             Mat blob = blobFromImage(bgr, 1.0, new Size(300, 300), MEAN, false, false, CV_32F);
             Net net = DETECTOR.get();
             net.setInput(blob);
-            // Output shape: [1, 1, N, 7] — each row is [_, _, confidence, x1, y1, x2, y2] (normalized 0–1)
+            // Forward pass: runs inference through all DNN layers and returns detections.
+            // Output shape: [1, 1, N, 7] — each of the N rows is:
+            //   [image_id, class_id, confidence, x1, y1, x2, y2] (coordinates normalized 0–1)
             Mat detections = net.forward("detection_out");
             Mat flat = detections.reshape(1, (int) (detections.total() / 7));
 
@@ -115,11 +135,14 @@ public class SmartCropper {
             float confidence = buf.get(i * 7 + 2);
             if (confidence < CONFIDENCE_THRESHOLD) continue;
 
+            // Coordinates are normalized (0.0–1.0); multiply by image dimensions to get pixels.
             int x1 = Math.max(0, (int) (buf.get(i * 7 + 3) * imgW));
             int y1 = Math.max(0, (int) (buf.get(i * 7 + 4) * imgH));
             int x2 = Math.min(imgW, (int) (buf.get(i * 7 + 5) * imgW));
             int y2 = Math.min(imgH, (int) (buf.get(i * 7 + 6) * imgH));
 
+            // Pick the largest face by area — if multiple faces are detected, the biggest
+            // one is most likely the subject of the avatar.
             int area = (x2 - x1) * (y2 - y1);
             if (area > bestArea) {
                 bestArea = area;
@@ -148,6 +171,7 @@ public class SmartCropper {
         int cx = face.x + face.width / 2;
         int cy = face.y + face.height / 2 - (int) (face.height * 0.1);
 
+        // Math.max/min clamping keeps the rectangle inside the image bounds.
         int x = Math.max(0, Math.min(cx - size / 2, img.getWidth() - size));
         int y = Math.max(0, Math.min(cy - size / 2, img.getHeight() - size));
 

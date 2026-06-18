@@ -40,6 +40,11 @@ public class S3ResultStore {
         this.s3Client = s3Client;
     }
 
+    // @PostConstruct runs once after Spring has finished constructing and injecting this bean.
+    // It's the right place for one-time initialization that needs injected values (like bucketName)
+    // which aren't available in the constructor yet. Using headBucket to check existence and only
+    // calling createBucket on NoSuchBucketException makes this idempotent — safe to call on every
+    // startup whether or not the bucket already exists.
     @PostConstruct
     void initBucket() {
         try {
@@ -48,6 +53,13 @@ public class S3ResultStore {
             s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
             log.info("Created S3 bucket bucket={}", bucketName);
         }
+
+        // S3 lifecycle rules are server-side policies that automatically delete objects
+        // matching a key prefix after N days. This is the primary cost-control mechanism:
+        // even if nobody claims a result, S3 will clean it up without any code running.
+        // Two rules cover the two key prefixes used in this service:
+        //   results/{jobId} — processed output waiting to be downloaded
+        //   uploads/{jobId} — raw bytes uploaded by the user, waiting for the worker
         s3Client.putBucketLifecycleConfiguration(
                 PutBucketLifecycleConfigurationRequest.builder()
                         .bucket(bucketName)
@@ -101,6 +113,10 @@ public class S3ResultStore {
                 DeleteObjectRequest.builder().bucket(bucketName).key("uploads/" + jobId).build());
     }
 
+    // Results are one-shot: download and delete in the same call. This is a read-then-delete
+    // pattern — not atomically guaranteed by S3 (two simultaneous callers could both read
+    // before either deletes), but acceptable here because the job status check in the controller
+    // provides a first gate, and double-download of the same image is a harmless edge case.
     // Returns null if the result has already been claimed or doesn't exist.
     public ProcessingResult claimResult(String jobId) {
         String key = "results/" + jobId;

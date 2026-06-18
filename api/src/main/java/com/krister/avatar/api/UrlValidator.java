@@ -7,15 +7,21 @@ import java.net.URL;
 import java.net.UnknownHostException;
 
 // Validates submitted URLs at the API boundary before any job is queued.
-// Two concerns handled here: format correctness and SSRF prevention.
+//
+// Two security concerns are addressed here:
+// 1. Format correctness — reject garbage before it reaches the worker.
+// 2. SSRF (Server-Side Request Forgery) prevention — an attacker could submit a URL
+//    pointing to an internal service (e.g. http://169.254.169.254 is the AWS instance
+//    metadata endpoint) and trick the worker into fetching secrets on their behalf.
+//    We prevent this by resolving the hostname and rejecting reserved/private IP ranges.
 class UrlValidator {
 
     private UrlValidator() {}
 
     // Throws IllegalArgumentException with a caller-safe message on any violation.
-    // DNS rebinding caveat: the host is resolved once here; a malicious DNS server
-    // could return a different IP for the actual download request. Full mitigation
-    // requires pinning the resolved address in the HTTP client (future improvement).
+    // DNS rebinding caveat: the host is resolved once here at submission time; a malicious
+    // DNS server could return a public IP now but a private IP when the worker actually
+    // fetches it. Full mitigation requires pinning the resolved address in the HTTP client.
     static void validate(String url) {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("URL must not be blank");
@@ -46,7 +52,7 @@ class UrlValidator {
             throw new IllegalArgumentException("URL host could not be resolved");
         }
 
-        // Generic message intentional — revealing "private IP blocked" would let an
+        // Generic message intentional — saying "private IP blocked" would let an
         // attacker probe internal network topology by observing which hosts are reachable.
         if (isReserved(address)) {
             throw new IllegalArgumentException("URL is not allowed");
