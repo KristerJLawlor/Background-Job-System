@@ -20,6 +20,45 @@ Wait ~30 seconds for services to start, then open **http://localhost:8080** in y
 
 ---
 
+## Cloud Deployment (Render)
+
+The repo includes a `render.yaml` blueprint that deploys the full stack to [Render](https://render.com) on the free tier: API web service, background worker, and Redis.
+
+**Prerequisites**
+
+- A [Cloudflare](https://cloudflare.com) account with R2 enabled (free: 10 GB storage, no egress fees)
+- A Render account connected to this GitHub repo
+
+**Steps**
+
+1. **Create an R2 bucket** in the Cloudflare dashboard. Name it `avatar-results` (or anything — you'll set the name as an env var).
+
+2. **Generate R2 API credentials**: R2 → Manage R2 API Tokens → Create Token (Object Read & Write on your bucket). Note the Access Key ID, Secret Access Key, and your Cloudflare Account ID.
+
+3. **Deploy on Render**: New → Blueprint → select this repo. Render reads `render.yaml` and creates all three services automatically.
+
+4. **Set the secret env vars** in the Render dashboard for both `avatar-api` and `avatar-worker`:
+
+   | Variable | Value |
+   |----------|-------|
+   | `AWS_ACCESS_KEY_ID` | R2 access key ID |
+   | `AWS_SECRET_ACCESS_KEY` | R2 secret access key |
+   | `S3_BUCKET_NAME` | your R2 bucket name |
+   | `S3_ENDPOINT_OVERRIDE` | `https://<account-id>.r2.cloudflarestorage.com` |
+   | `API_KEY` | any secret value (frontend defaults to `changeme`) |
+
+5. **Set a Cloudflare R2 spend limit** in Cloudflare Billing → Spending Limits. This is the platform-level hard stop if storage is abused.
+
+Once deployed, the public URL (`https://avatar-api.onrender.com`) serves the GUI directly. The free tier web service sleeps after 15 minutes of inactivity (~30 s cold start); the worker stays running continuously.
+
+**Cost protection**
+
+Two layers guard against storage abuse:
+- **Per-IP rate limit** — 10 job submissions per minute per IP (configurable via `JOB_RATE_LIMIT_RPM`)
+- **Global daily cap** — 500 total jobs per UTC day across all IPs (configurable via `JOB_GLOBAL_DAILY_LIMIT`). At ~150 KB per processed result this keeps peak S3 usage well within the R2 free tier.
+
+---
+
 ## GUI
 
 The web interface is served from the API container at **http://localhost:8080**.
@@ -97,7 +136,7 @@ curl -X POST "http://localhost:8080/api/jobs?url=https://picsum.photos/300" \
 { "jobId": "ee0d7b58-363e-4017-a48c-960bc09967f2" }
 ```
 
-Returns `400` if the URL is invalid or points to a private/reserved IP address. Returns `429` if the per-IP rate limit is exceeded (10 requests/minute by default).
+Returns `400` if the URL is invalid or points to a private/reserved IP address. Returns `429` if the per-IP rate limit is exceeded (10 requests/minute by default) or if the global daily job limit is reached.
 
 ### Submit a job from a file upload
 
@@ -204,6 +243,7 @@ cp .env.example .env
 | `JOB_RESULT_TTL_MINUTES` | `60` | How long job status is kept in Redis |
 | `JOB_RESULT_EXPIRY_DAYS` | `1` | S3 lifecycle expiry for stored results |
 | `JOB_RATE_LIMIT_RPM` | `10` | Max job submissions per IP per minute |
+| `JOB_GLOBAL_DAILY_LIMIT` | `500` | Total jobs accepted per UTC day across all IPs |
 | `TRACING_SAMPLE_RATE` | `1.0` | Fraction of requests to trace (lower for high traffic) |
 
 ---
@@ -263,5 +303,5 @@ The frontend dev server proxies all `/api` requests to the Spring Boot API, so y
 | Metric | Type | Description |
 |--------|------|-------------|
 | `jobs.submitted` | Counter | Successful job submissions |
-| `jobs.rejected` | Counter | Rejected submissions, tagged by `reason` (`rate_limited`, `invalid_url`) |
+| `jobs.rejected` | Counter | Rejected submissions, tagged by `reason` (`rate_limited`, `invalid_url`, `quota_exceeded`) |
 | `jobs.processing.duration` | Timer | End-to-end processing time, tagged by `status` |

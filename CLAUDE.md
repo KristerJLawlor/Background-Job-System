@@ -94,6 +94,7 @@ Admin: GET/POST/DELETE /api/admin/jobs/failed  (AdminController)
 | `jobs:queue` | List | LPUSH/BRPOP work queue |
 | `jobs:retry` | Sorted Set | Score = fire-at epoch second |
 | `jobs:dlq` | Hash | `jobId → serialized DlqEntry` |
+| `global:jobs:daily:{yyyy-MM-dd}` | String (counter) | Global daily job quota; expires after 2 days |
 
 **Auth**
 
@@ -136,7 +137,7 @@ Gradle does not pull classifier-specific JARs transitively. Omitting `openblas` 
 
 ## Testing Patterns
 
-**`@WebMvcTest` controller tests** — must `@MockBean` both `RedisJobStore` and `S3ResultStore` because `shared` is on the component scan path.
+**`@WebMvcTest` controller tests** — must `@MockBean` `RedisJobStore`, `S3ResultStore`, and `GlobalJobQuota`. `RedisJobStore` and `S3ResultStore` are pulled in via the `shared` component scan; `GlobalJobQuota` lives in `api` but requires `StringRedisTemplate` which `@WebMvcTest` does not configure.
 
 **`RedisJobStoreIntegrationTest`** — uses Testcontainers (`redis:7-alpine`) with `@DynamicPropertySource`. Requires Docker; the class is annotated `@Testcontainers(disabledWithoutDocker = true)` so it skips gracefully without Docker.
 
@@ -151,7 +152,8 @@ All variables have working defaults for local dev. Key ones for production:
 | `API_KEY` | `changeme` | Set in production |
 | `REDIS_HOST` | `localhost` | `redis` in Docker Compose |
 | `S3_BUCKET_NAME` | `avatar-results` | |
-| `S3_ENDPOINT_OVERRIDE` | _(empty)_ | Set to `http://localstack:4566` for local |
+| `S3_ENDPOINT_OVERRIDE` | _(empty)_ | Set to `http://localstack:4566` for local; Cloudflare R2 endpoint for cloud |
+| `JOB_GLOBAL_DAILY_LIMIT` | `500` | Total jobs accepted per UTC day across all IPs; protects S3 storage budget |
 | `JOB_RETRY_MAX_ATTEMPTS` | `3` | |
 | `JOB_RETRY_BASE_DELAY_SECONDS` | `10` | Doubles per attempt (10s, 20s, 40s) |
 | `JOB_RESULT_EXPIRY_DAYS` | `1` | S3 lifecycle policy for results and uploads |
