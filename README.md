@@ -1,6 +1,6 @@
 # Background Job System
 
-An asynchronous image processing service. Submit an image via the browser GUI or REST API, and receive a smart-cropped, resized 128×128 result. Static images output as PNG; animated GIFs are processed frame-by-frame and returned as animated GIFs.
+An asynchronous image processing service. Submit an image via the browser GUI or REST API, and receive a smart-cropped, resized 128×128 result. Accepts PNG, JPEG, GIF, and WebP. Static images output as PNG; animated GIFs are processed frame-by-frame and returned as animated GIFs.
 
 **Tested:** a 400×400 rotating Earth GIF (44 frames, 1 MB) → 128×128 animated GIF (242 KB) with all frames and timing preserved.
 
@@ -22,7 +22,9 @@ Wait ~30 seconds for services to start, then open **http://localhost:8080** in y
 
 ## Cloud Deployment (Render)
 
-The repo includes a `render.yaml` blueprint that deploys the full stack to [Render](https://render.com) on the free tier: API web service, background worker, and Redis.
+The repo includes a `render.yaml` blueprint that deploys the full stack to [Render](https://render.com) on the **free tier**: one API web service and one Redis instance. The worker thread pool runs inside the API process so no paid background worker service is required.
+
+> **Free-tier performance:** Render's free tier allocates 0.1 CPU and 512 MB RAM. Image processing — especially the OpenCV DNN face detection step — is noticeably slower than on dedicated hardware; expect 20–60 s per job depending on image size. The service also sleeps after 15 minutes of inactivity, adding a ~30 s cold-start delay before the first request is handled. This is intentional — the service is hosted on the free tier as a proof-of-concept.
 
 **Prerequisites**
 
@@ -35,9 +37,9 @@ The repo includes a `render.yaml` blueprint that deploys the full stack to [Rend
 
 2. **Generate R2 API credentials**: R2 → Manage R2 API Tokens → Create Token (Object Read & Write on your bucket). Note the Access Key ID, Secret Access Key, and your Cloudflare Account ID.
 
-3. **Deploy on Render**: New → Blueprint → select this repo. Render reads `render.yaml` and creates all three services automatically.
+3. **Deploy on Render**: New → Blueprint → select this repo. Render reads `render.yaml` and creates the `avatar-api` web service and `avatar-redis` instance automatically.
 
-4. **Set the secret env vars** in the Render dashboard for both `avatar-api` and `avatar-worker`:
+4. **Set the secret env vars** in the Render dashboard for `avatar-api`:
 
    | Variable | Value |
    |----------|-------|
@@ -49,7 +51,7 @@ The repo includes a `render.yaml` blueprint that deploys the full stack to [Rend
 
 5. **Set a Cloudflare R2 spend limit** in Cloudflare Billing → Spending Limits. This is the platform-level hard stop if storage is abused.
 
-Once deployed, the public URL (`https://avatar-api.onrender.com`) serves the GUI directly. The free tier web service sleeps after 15 minutes of inactivity (~30 s cold start); the worker stays running continuously.
+Once deployed, the public URL (`https://avatar-api.onrender.com`) serves the GUI directly.
 
 **Cost protection**
 
@@ -63,7 +65,7 @@ Two layers guard against storage abuse:
 
 The web interface is served from the API container at **http://localhost:8080**.
 
-- **Upload Files tab** — drag-and-drop or click to browse; select multiple images at once (.png, .jpg, .gif, up to 10 MB each)
+- **Upload Files tab** — drag-and-drop or click to browse; select multiple images at once (.png, .jpg, .gif, .webp, up to 10 MB each)
 - **Enter URLs tab** — paste one URL per line; all are submitted as a batch
 - Each submitted item appears as a job card showing real-time status; a **Download** button appears automatically when processing completes
 - Click ⚙ to set your API key (stored in browser localStorage; default is `changeme`)
@@ -91,8 +93,8 @@ Five Gradle modules:
 |--------|------|------|
 | `shared` | Library | `RedisJobStore`, `S3ResultStore`, `JobStatus` — used by both Spring Boot apps |
 | `core` | Library | Image download, resize, OpenCV DNN face detection + smart crop, animated GIF processing |
-| `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting, serves GUI |
-| `worker` | Spring Boot (8081) | Dequeues jobs from Redis and processes them |
+| `api` | Spring Boot (8080) | Job submission, status/result endpoints, auth, rate limiting, serves GUI; also runs the worker pool in-process for cloud (Render free tier) deployment |
+| `worker` | Spring Boot (8081) | Standalone worker process — used in local Docker Compose; worker logic is merged into `api` for the Render deployment to avoid paid background worker tier |
 | `cli` | Java app | Legacy standalone CLI |
 
 **Job flow**
@@ -137,6 +139,8 @@ curl -X POST "http://localhost:8080/api/jobs?url=https://picsum.photos/300" \
 ```
 
 Returns `400` if the URL is invalid or points to a private/reserved IP address. Returns `429` if the per-IP rate limit is exceeded (10 requests/minute by default) or if the global daily job limit is reached.
+
+The URL must point directly to an image file (ending in `.jpg`, `.png`, `.gif`, `.webp`, etc.). Sharing page URLs — for example a Tenor or Giphy share link — will fail immediately with a descriptive error rather than burning retry attempts.
 
 ### Submit a job from a file upload
 

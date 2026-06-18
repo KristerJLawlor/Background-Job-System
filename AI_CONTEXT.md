@@ -4,221 +4,146 @@
 
 ## Project Overview
 
-This project is a Java backend system for asynchronous image processing.
+An asynchronous image processing service built in Java 21 / Spring Boot 3. Accepts image jobs via REST API or browser GUI, processes them in background worker threads, and produces smart-cropped 128×128 Discord avatars stored in S3-compatible object storage.
 
-The system accepts image-processing jobs through a REST API, processes them asynchronously using worker threads, resizes images to Discord avatar dimensions, and stores the processed output locally.
-
-The project is structured as a Gradle multi-module monorepo and is containerized with Docker.
+Structured as a Gradle multi-module monorepo, containerized with Docker Compose for local development, and deployed to Render's free tier for public access.
 
 ---
 
-# Architecture
+## Modules
 
-The project currently contains three modules:
-
-## api
-Spring Boot REST API.
-
-Responsibilities:
-- Accept job submissions
-- Return job IDs immediately
-- Expose endpoints for checking job status
-- Coordinate background processing
-
-## core
-Contains the core business logic.
-
-Responsibilities:
-- Image downloading
-- Image resizing (multi-step, bicubic)
-- Smart cropping: OpenCV DNN SSD ResNet face detection; falls back to center crop
-- Animated GIF processing (frame-by-frame crop + resize)
-
-## cli
-Original command-line testing interface.
-
-Responsibilities:
-- Manual local testing
-- Batch image processing tests
-- Verifying processing behavior without the API
+| Module | Type | Role |
+|--------|------|------|
+| `shared` | `java-library` | `RedisJobStore`, `S3ResultStore`, `AwsConfig`, `JobStatus` — shared by both Spring Boot apps |
+| `core` | `java-library` | `DiscordImageResizer` (download + multi-step bicubic resize), `SmartCropper` (OpenCV DNN SSD ResNet face detection, falls back to center crop), `AnimatedGifProcessor` (frame-by-frame GIF resize) |
+| `api` | Spring Boot (8080) | Job submission (URL + file upload), status/result endpoints, API key auth, IP rate limiting, global daily quota, serves React GUI; also runs `JobWorkerPool`, `JobProcessor`, and `RetryPromoter` in-process for the Render free-tier cloud deployment |
+| `worker` | Spring Boot (8081) | Standalone worker process — used in local Docker Compose; the same worker logic (`JobWorkerPool`, `JobProcessor`, `RetryPromoter`) exists in both `api` and `worker` packages to support both deployment topologies |
+| `cli` | Java app | Legacy batch CLI for local testing |
 
 ---
 
-# Current Features
+## Current Features
 
-- Asynchronous background job processing via Redis queue
-- REST API for job submission, status polling, and result download
-- File upload (multipart) and URL submission
-- OpenCV DNN SSD ResNet face detection with smart crop; center-crop fallback
-- Animated GIF support: frame-by-frame crop + resize, timing preserved
-- Exponential backoff retries (3 attempts) + dead letter queue
-- S3 result storage (LocalStack locally, real S3 in prod)
+- Async background job processing via Redis LPUSH/BRPOP queue
+- REST API for job submission (URL + multipart file upload), status polling, result download
+- Browser GUI (React + Vite) served from the API jar; polls status every 2 s, auto-downloads on completion
+- OpenCV DNN SSD ResNet face detection with smart crop; center-crop fallback; images pre-downsampled to 600 px max before DNN to reduce CPU cost
+- Animated GIF support: frame-by-frame crop + resize, timing preserved; single crop rectangle computed from first frame and applied to all frames
+- WebP support via TwelveMonkeys ImageIO (`imageio-webp`) — plugs into `ImageIO.read()` via ServiceLoader
+- Content-Type validation on URL downloads: fails fast with a descriptive error if the URL returns HTML (e.g. Tenor/Giphy share pages) instead of an image
+- Exponential backoff retries (3 attempts: 10 s, 20 s, 40 s) via Redis sorted set + `RetryPromoter`
+- Dead letter queue (`jobs:dlq` Redis hash) + `AdminController` (list / requeue / delete failed jobs)
+- S3 result storage: LocalStack locally, Cloudflare R2 in production
+- IP-based token bucket rate limiting (Bucket4j, default 10 req/min)
+- Global daily job quota (default 500/day) via Redis atomic INCR
 - Prometheus metrics, Grafana dashboards, OTLP/Jaeger distributed tracing
-- React + Vite frontend served from the API jar
-- Docker Compose full stack (api, worker, redis, localstack, prometheus, grafana, jaeger)
+- Docker Compose full stack: api, worker, redis, localstack:3.8, prometheus, grafana, jaeger
 
 ---
 
-# Current Job Flow
+## Job Flow
 
-Client
-  ->
-Spring Boot API
-  ->
-Job Queue
-  ->
-Worker Thread Pool
-  ->
-Image Processing
-  ->
-avatars/ output directory
+```
+POST /api/jobs?url=...          (URL submission)
+POST /api/jobs/upload           (multipart file upload)
+  → file upload: S3ResultStore.storeUpload(jobId, bytes) → uploads/{jobId}
+  → setStatus(PENDING) + LPUSH jobs:queue
+
+  → [JobWorkerPool BRPOP]
+  → setStatus(PROCESSING)
+  → url starts with "s3://uploads/"? → S3ResultStore.downloadUpload(jobId)
+  → else → DiscordImageResizer.downloadRaw(url)
+      → Content-Type check: throws immediately if text/* (page URL, not image)
+  → AnimatedGifProcessor.isAnimatedGif(bytes)?
+      yes → AnimatedGifProcessor.process(bytes) → result contentType = "image/gif"
+      no  → ImageIO.read → DiscordImageResizer.resizeImage (SmartCropper inside) → PNG → "image/png"
+  → S3ResultStore.storeResult(jobId, ProcessingResult) → results/{jobId}
+  → if upload: deleteUpload(jobId)
+  → setStatus(COMPLETED)
+
+On failure (attempt < 3):
+  → ZADD jobs:retry (score = now + backoffSeconds)
+  → RetryPromoter @Scheduled every 5 s moves due entries back to jobs:queue
+
+On final failure:
+  → setStatus(FAILED) + pushToDlq(jobId, url, attempts, error)
+```
+
+---
+
+## Deployment
+
+### Local (Docker Compose)
+
+```bash
+docker compose up -d --build
+```
+
+Opens at http://localhost:8080. API and worker run as separate containers; Redis and LocalStack are local.
+
+### Cloud (Render free tier)
+
+Live at https://avatar-api-gzvg.onrender.com
+
+- **Free tier constraints:** 0.1 CPU, 512 MB RAM. Processing takes 20–60 s per job depending on image size. Service sleeps after 15 min inactivity (~30 s cold start).
+- Worker logic merged into the `api` module — no separate worker service needed, which avoids Render's paid background worker tier ($7/month minimum).
+- S3 storage: Cloudflare R2 (free tier: 10 GB, no egress fees).
+- `render.yaml` blueprint creates `avatar-api` (web, free) and `avatar-redis` (Redis, free).
+
+---
+
+## Storage Model
+
+- `results/{jobId}` — processed output; S3 object metadata stores content type; expires after 1 day.
+- `uploads/{jobId}` — raw upload bytes awaiting worker; deleted after successful processing; expires after 1 day.
+- Results are one-shot: `claimResult()` downloads and deletes in one call.
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/jobs?url=...` | Submit URL job; returns `{"jobId":"..."}` |
+| `POST` | `/api/jobs/upload` | Submit file upload job; multipart `file` field |
+| `GET` | `/api/jobs/{jobId}` | Status: `PENDING` / `PROCESSING` / `COMPLETED` / `FAILED` |
+| `GET` | `/api/jobs/{jobId}/result` | Claim result (one-shot, deletes from S3) |
+| `GET` | `/api/admin/jobs/failed` | List DLQ entries |
+| `POST` | `/api/admin/jobs/failed/{jobId}/requeue` | Move DLQ entry back to queue |
+| `DELETE` | `/api/admin/jobs/failed/{jobId}` | Discard DLQ entry |
+| `GET` | `/actuator/health` | Health check |
+
+All `/api/**` endpoints require `X-Api-Key` header. Default: `changeme`.
 
 ---
 
 ## Run Commands
 
-Build:
+```bash
+# Build all modules
 ./gradlew build
 
-Run API:
+# Local dev (requires Redis on localhost:6379)
 ./gradlew :api:bootRun
+./gradlew :worker:bootRun
 
-Run CLI:
-./gradlew :cli:run
+# Full stack via Docker
+docker compose up -d --build
 
-Docker:
-docker build -t avatar-api .
-docker run -p 8080:8080 avatar-api
+# End-to-end smart crop validation (requires stack running)
+bash scripts/validate-smart-crop.sh
 
----
-
-# Technology Stack
-
-## Languages
-- Java 21
-
-## Frameworks
-- Spring Boot 3
-
-## Build Tools
-- Gradle
-
-## Infrastructure
-- Docker
-
-## APIs
-- REST API
+# Frontend dev server (proxies /api to localhost:8080)
+cd frontend && npm install && npm run dev
+```
 
 ---
 
-# Current API Endpoints
-
-## Submit Job
-
-POST /api/jobs
-
-Request Body:
-
-```json
-{
-  "imageUrl": "https://picsum.photos/300"
-}
-
----
-
-## Important Constraints
+## Hard Constraints
 
 Do NOT:
-- replace Gradle with Maven
-- collapse modules into one project
-- remove Docker support
-- remove asynchronous processing
-
-Keep the current architecture modular.
-
----
-
-## Planned Improvements
-
-Next goals:
-- Redis-backed distributed queue
-- worker service
-- Docker Compose
-- AWS S3 integration
-- retry handling
-- implement Smart Cropping features
-
----
-
-# Image Processing Roadmap
-
-The image pipeline currently performs:
-- image download
-- center crop
-- resize to Discord avatar dimensions
-
-Future improvements should add intelligent cropping support.
-
----
-
-# Smart Cropping (Implemented)
-
-`SmartCropper` in the `core` module uses the OpenCV DNN module with the
-`res10_300x300_ssd_iter_140000` Caffe SSD ResNet model (bundled in the JAR under
-`core/src/main/resources/dnn/`). It handles frontal, angled, and partially-obscured
-faces that the older Haar cascade missed. Confidence threshold is 0.1 to accommodate
-lower scores from distant or non-frontal subjects. Falls back to a center crop when
-no face is detected above the threshold.
-
-## Possible future improvements
-
-- Manual crop override (API + frontend UI)
-- Per-user API keys and job ownership
-
-# Additional Architectural Notes
-
-## Dockerization
-
-The API module is containerized using Docker multi-stage builds.
-
-The service:
-- runs on Java 21
-- exposes port 8080
-- is intended for AWS ECS deployment
-
----
-
-## Current Storage Model
-
-Processed avatars are:
-- stored temporarily in memory
-- also written to the local avatars/ directory
-
-Future plans will replace local storage with AWS S3.
-
----
-
-## Future Image Processing Improvements
-
-Planned enhancements:
-- OpenCV-based face detection
-- smart subject-aware cropping
-- optional manual crop override support
-
----
-
-## Long-Term Architecture Direction
-
-The project is evolving toward:
-
-Client
- ->
-API Service
- ->
-Redis Queue
- ->
-Worker Services
- ->
-S3 Storage
-
-The current architecture should gradually evolve toward distributed processing while preserving the modular design.
+- Replace Gradle with Maven
+- Collapse modules into a single project
+- Remove Docker support
+- Remove asynchronous processing
+- Remove the modular multi-module structure
