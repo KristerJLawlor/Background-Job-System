@@ -45,6 +45,17 @@ public class DiscordImageResizer {
                 throw new IOException("HTTP error code: " + responseCode);
             }
 
+            // Reject web pages early — before reading the body — so we don't waste
+            // bandwidth downloading HTML and don't burn retry attempts on a URL that
+            // will never be an image. Common cause: sharing a Tenor/Giphy page URL
+            // instead of the direct .gif/.webp link.
+            String contentType = connection.getContentType();
+            if (contentType != null && contentType.startsWith("text/")) {
+                throw new IOException(
+                    "URL returned a web page, not an image. Use a direct link to the image file " +
+                    "(e.g. ending in .jpg, .png, .gif, .webp) rather than a page that displays it.");
+            }
+
             try (InputStream in = connection.getInputStream()) {
                 return in.readAllBytes();
             }
