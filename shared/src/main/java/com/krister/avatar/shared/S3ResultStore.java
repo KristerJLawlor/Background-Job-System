@@ -60,26 +60,35 @@ public class S3ResultStore {
         // Two rules cover the two key prefixes used in this service:
         //   results/{jobId} — processed output waiting to be downloaded
         //   uploads/{jobId} — raw bytes uploaded by the user, waiting for the worker
-        s3Client.putBucketLifecycleConfiguration(
-                PutBucketLifecycleConfigurationRequest.builder()
-                        .bucket(bucketName)
-                        .lifecycleConfiguration(BucketLifecycleConfiguration.builder()
-                                .rules(
-                                        LifecycleRule.builder()
-                                                .id("expire-unclaimed-results")
-                                                .status(ExpirationStatus.ENABLED)
-                                                .filter(LifecycleRuleFilter.builder().prefix("results/").build())
-                                                .expiration(LifecycleExpiration.builder().days(resultExpiryDays).build())
-                                                .build(),
-                                        LifecycleRule.builder()
-                                                .id("expire-stale-uploads")
-                                                .status(ExpirationStatus.ENABLED)
-                                                .filter(LifecycleRuleFilter.builder().prefix("uploads/").build())
-                                                .expiration(LifecycleExpiration.builder().days(1).build())
-                                                .build())
-                                .build())
-                        .build());
-        log.info("S3 lifecycle configured bucket={} expiryDays={}", bucketName, resultExpiryDays);
+        // Wrapped in try-catch because setting lifecycle rules requires Admin Read & Write
+        // permission on the R2 token. The app can still function without it — the daily
+        // quota counter is the primary cost guard. Log a clear warning so the operator
+        // knows to either grant the permission or configure the rules manually in the dashboard.
+        try {
+            s3Client.putBucketLifecycleConfiguration(
+                    PutBucketLifecycleConfigurationRequest.builder()
+                            .bucket(bucketName)
+                            .lifecycleConfiguration(BucketLifecycleConfiguration.builder()
+                                    .rules(
+                                            LifecycleRule.builder()
+                                                    .id("expire-unclaimed-results")
+                                                    .status(ExpirationStatus.ENABLED)
+                                                    .filter(LifecycleRuleFilter.builder().prefix("results/").build())
+                                                    .expiration(LifecycleExpiration.builder().days(resultExpiryDays).build())
+                                                    .build(),
+                                            LifecycleRule.builder()
+                                                    .id("expire-stale-uploads")
+                                                    .status(ExpirationStatus.ENABLED)
+                                                    .filter(LifecycleRuleFilter.builder().prefix("uploads/").build())
+                                                    .expiration(LifecycleExpiration.builder().days(1).build())
+                                                    .build())
+                                    .build())
+                            .build());
+            log.info("S3 lifecycle configured bucket={} expiryDays={}", bucketName, resultExpiryDays);
+        } catch (Exception e) {
+            log.warn("Could not configure S3 lifecycle rules (token may lack Admin Read & Write permission) — " +
+                    "configure expiry rules manually in the R2 dashboard to protect storage budget. Error: {}", e.getMessage());
+        }
     }
 
     public void storeResult(String jobId, ProcessingResult result) {
