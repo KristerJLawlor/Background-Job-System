@@ -24,6 +24,9 @@ class AdminControllerTest {
     @MockBean RedisJobStore jobStore;
     @MockBean S3ResultStore s3ResultStore;
     @MockBean GlobalJobQuota globalQuota;
+    @MockBean JobProcessor jobProcessor;
+    @MockBean JobWorkerPool jobWorkerPool;
+    @MockBean RetryPromoter retryPromoter;
 
     @Test
     void listFailed_returnsEntries() throws Exception {

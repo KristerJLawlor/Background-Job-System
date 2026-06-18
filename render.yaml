@@ -32,34 +32,6 @@ services:
       - key: JOB_GLOBAL_DAILY_LIMIT
         value: "500"
 
-  - type: worker
-    name: avatar-worker
-    runtime: docker
-    dockerfilePath: ./worker/Dockerfile
-    dockerContext: .
-    plan: free
-    envVars:
-      - key: REDIS_HOST
-        fromService:
-          type: redis
-          name: avatar-redis
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: redis
-          name: avatar-redis
-          property: port
-      - key: S3_BUCKET_NAME
-        sync: false
-      - key: AWS_REGION
-        value: auto
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
-      - key: S3_ENDPOINT_OVERRIDE
-        sync: false
-
   - type: redis
     name: avatar-redis
     plan: free

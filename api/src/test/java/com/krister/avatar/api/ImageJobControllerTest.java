@@ -46,6 +46,12 @@ class ImageJobControllerTest {
     // prevent context startup failures (@PostConstruct on S3ResultStore calls S3).
     @MockBean RedisJobStore redisJobStore;
     @MockBean S3ResultStore s3ResultStore;
+    // JobProcessor, JobWorkerPool, RetryPromoter are now @Components in the api package.
+    // @WebMvcTest tries to construct all api @Components; JobProcessor needs Tracer which
+    // the test context doesn't provide, so all three must be mocked to prevent context failure.
+    @MockBean JobProcessor jobProcessor;
+    @MockBean JobWorkerPool jobWorkerPool;
+    @MockBean RetryPromoter retryPromoter;
 
     // --- Authentication ---
 
