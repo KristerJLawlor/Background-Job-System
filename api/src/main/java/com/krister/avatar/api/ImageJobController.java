@@ -29,12 +29,14 @@ public class ImageJobController {
 
     private final ImageJobService jobService;
     private final IpRateLimiter rateLimiter;
+    private final GlobalJobQuota globalQuota;
     private final MeterRegistry meterRegistry;
 
     public ImageJobController(ImageJobService jobService, IpRateLimiter rateLimiter,
-                              MeterRegistry meterRegistry) {
+                              GlobalJobQuota globalQuota, MeterRegistry meterRegistry) {
         this.jobService = jobService;
         this.rateLimiter = rateLimiter;
+        this.globalQuota = globalQuota;
         this.meterRegistry = meterRegistry;
     }
 
@@ -48,6 +50,11 @@ public class ImageJobController {
             meterRegistry.counter("jobs.rejected", "reason", "rate_limited").increment();
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("error", "Rate limit exceeded — try again later"));
+        }
+        if (!globalQuota.tryConsume()) {
+            meterRegistry.counter("jobs.rejected", "reason", "quota_exceeded").increment();
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("error", "Daily processing limit reached — try again tomorrow"));
         }
         try {
             UrlValidator.validate(url);
@@ -68,6 +75,11 @@ public class ImageJobController {
             meterRegistry.counter("jobs.rejected", "reason", "rate_limited").increment();
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body(Map.of("error", "Rate limit exceeded — try again later"));
+        }
+        if (!globalQuota.tryConsume()) {
+            meterRegistry.counter("jobs.rejected", "reason", "quota_exceeded").increment();
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body(Map.of("error", "Daily processing limit reached — try again tomorrow"));
         }
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "File must not be empty"));

@@ -15,6 +15,7 @@ WORKDIR /app
 # bytedeco prebuilt JARs) links against GTK2 even in headless usage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -ms /bin/bash appuser

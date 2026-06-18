@@ -5,6 +5,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: free
+    healthCheckPath: /actuator/health
     envVars:
       - key: API_KEY
         sync: false
@@ -28,6 +29,8 @@ services:
         sync: false
       - key: S3_ENDPOINT_OVERRIDE
         sync: false
+      - key: JOB_GLOBAL_DAILY_LIMIT
+        value: "500"
 
   - type: worker
     name: avatar-worker

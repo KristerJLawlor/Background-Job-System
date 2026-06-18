@@ -41,6 +41,7 @@ class ImageJobControllerTest {
     @Autowired MockMvc mvc;
     @MockBean ImageJobService jobService;
     @MockBean IpRateLimiter rateLimiter;
+    @MockBean GlobalJobQuota globalQuota;
     // RedisJobStore and S3ResultStore are in the shared component scan path; mock both to
     // prevent context startup failures (@PostConstruct on S3ResultStore calls S3).
     @MockBean RedisJobStore redisJobStore;
@@ -76,8 +77,21 @@ class ImageJobControllerTest {
     }
 
     @Test
+    void submitJob_quotaExceeded_returns429() throws Exception {
+        when(rateLimiter.tryConsume(any())).thenReturn(true);
+        when(globalQuota.tryConsume()).thenReturn(false);
+
+        mvc.perform(post("/api/jobs")
+                        .header("X-Api-Key", API_KEY)
+                        .param("url", "https://1.1.1.1/img.png"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("Daily processing limit reached — try again tomorrow"));
+    }
+
+    @Test
     void submitJob_invalidUrl_returns400() throws Exception {
         when(rateLimiter.tryConsume(any())).thenReturn(true);
+        when(globalQuota.tryConsume()).thenReturn(true);
         try (MockedStatic<UrlValidator> validator = mockStatic(UrlValidator.class)) {
             validator.when(() -> UrlValidator.validate(anyString()))
                     .thenThrow(new IllegalArgumentException("URL is not allowed"));
@@ -93,6 +107,7 @@ class ImageJobControllerTest {
     @Test
     void submitJob_validUrl_returnsJobId() throws Exception {
         when(rateLimiter.tryConsume(any())).thenReturn(true);
+        when(globalQuota.tryConsume()).thenReturn(true);
         when(jobService.createJob(anyString())).thenReturn("job-abc");
         try (MockedStatic<UrlValidator> validator = mockStatic(UrlValidator.class)) {
             // validate() is void — by default the mock does nothing (URL passes)

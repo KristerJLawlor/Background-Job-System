@@ -23,6 +23,7 @@ class AdminControllerTest {
     @Autowired MockMvc mvc;
     @MockBean RedisJobStore jobStore;
     @MockBean S3ResultStore s3ResultStore;
+    @MockBean GlobalJobQuota globalQuota;
 
     @Test
     void listFailed_returnsEntries() throws Exception {

@@ -21,6 +21,8 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -ms /bin/bash appuser
 
 COPY --from=build /build/api/build/libs/*.jar app.jar
