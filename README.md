@@ -24,7 +24,7 @@ Wait ~30 seconds for services to start, then open **http://localhost:8080** in y
 
 The repo includes a `render.yaml` blueprint that deploys the full stack to [Render](https://render.com) on the **free tier**: one API web service and one Redis instance. The worker thread pool runs inside the API process so no paid background worker service is required.
 
-> **Free-tier performance:** Render's free tier allocates 0.1 CPU and 512 MB RAM. Image processing — especially the OpenCV DNN face detection step — is noticeably slower than on dedicated hardware; expect 20–60 s per job depending on image size. The service also sleeps after 15 minutes of inactivity, adding a ~30 s cold-start delay before the first request is handled. This is intentional — the service is hosted on the free tier as a proof-of-concept.
+> **Free-tier performance:** Render's free tier allocates 0.1 vCPU and 512 MB RAM. Image processing — especially the OpenCV DNN face detection step — is noticeably slower than on dedicated hardware; expect 20–60 s per job depending on image size. The service also sleeps after 15 minutes of inactivity, adding a ~30 s cold-start delay before the first request is handled. Increasing `JOB_WORKER_THREADS` has no effect at this tier — the bottleneck is CPU compute, not thread count; a single job saturates the available 0.1 vCPU. Parallelism benefits from multiple worker threads require upgrading to a paid Render plan with ≥1 dedicated vCPU.
 
 **Prerequisites**
 

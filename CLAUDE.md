@@ -158,3 +158,9 @@ All variables have working defaults for local dev. Key ones for production:
 | `JOB_RETRY_BASE_DELAY_SECONDS` | `10` | Doubles per attempt (10s, 20s, 40s) |
 | `JOB_RESULT_EXPIRY_DAYS` | `1` | S3 lifecycle policy for results and uploads |
 | `TRACING_SAMPLE_RATE` | `1.0` | Lower in high-traffic prod |
+
+## Deployment
+
+**Render free tier (live)** — `render.yaml` deploys only the `api` service (`plan: free`). The `Dockerfile` builds only `:api:bootJar` — the `worker` module is not deployed as a separate process. `JobWorkerPool` runs embedded inside the API process, so no paid background worker service is needed.
+
+Free-tier hardware is 0.1 vCPU and 512 MB RAM. OpenCV DNN face detection at this compute level takes 20–60 s per job. **Increasing `JOB_WORKER_THREADS` does not improve throughput on this tier** — the bottleneck is CPU, not thread parallelism. At 0.1 vCPU, a single job saturates available compute; additional threads sit idle. Worker thread parallelism only helps when the host has ≥1 dedicated vCPU.
